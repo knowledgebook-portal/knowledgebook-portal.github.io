@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="A fast, beautiful, searchable knowledge base. Markdown docs, instant search, real-time sync, version history." />
+  <meta name="theme-color" content="#5b6cff" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)" />
+  <meta name="color-scheme" content="light dark" />
+  <title>KnowledgeBox</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235b6cff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z'/><polyline points='3.27 6.96 12 12.01 20.73 6.96'/><line x1='12' y1='22.08' x2='12' y2='12'/></svg>" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js" defer></script>
+  <script type="module" src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+
+  <!-- =========================================================
+       AUTH SCREEN
+       ========================================================= -->
+  <div id="auth-screen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-logo">
+        <svg viewBox="0 0 24 24" width="52" height="52" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+      </div>
+      <h1>KnowledgeBox</h1>
+      <p class="auth-tagline" id="auth-tagline">Your personal knowledge base.<br/>Sign in or create an account.</p>
+
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="signin">Sign in</button>
+        <button class="auth-tab" data-tab="signup">Create account</button>
+        <button class="auth-tab" data-tab="magic">Magic link</button>
+      </div>
+
+      <form id="auth-form" class="auth-form" autocomplete="on">
+        <div class="form-group">
+          <label for="auth-email">Email</label>
+          <input id="auth-email" type="email" required autocomplete="email" />
+        </div>
+        <div class="form-group" id="auth-password-group">
+          <label for="auth-password">Password</label>
+          <input id="auth-password" type="password" required autocomplete="current-password" minlength="6" />
+        </div>
+        <div class="form-group" id="auth-name-group" hidden>
+          <label for="auth-name">Display name</label>
+          <input id="auth-name" type="text" autocomplete="name" />
+        </div>
+        <div id="auth-error" class="form-error" hidden></div>
+        <div id="auth-info"  class="form-info" hidden></div>
+        <button type="submit" class="btn btn-primary btn-block" id="auth-submit">Sign in</button>
+      </form>
+
+      <div class="auth-footer">
+        <button class="link-btn" id="forgot-password">Forgot password?</button>
+      </div>
+
+      <div class="auth-bg-orbs" aria-hidden="true">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================
+       CONFIG-MISSING SCREEN (shown if config.js isn't wired)
+       ========================================================= -->
+  <div id="config-missing" class="config-missing" hidden>
+    <div class="config-card">
+      <h2>One-time setup needed</h2>
+      <p>Open <code>config.js</code> in this folder and fill in your Supabase project URL and anon key.</p>
+      <p>Don't have a Supabase project yet? It's free — see <code>README.md</code> for a 3-minute walkthrough.</p>
+    </div>
+  </div>
+
+  <!-- =========================================================
+       MAIN APP
+       ========================================================= -->
+  <div id="app" class="app" hidden>
+
+    <!-- Top bar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <button id="toggle-sidebar" class="icon-btn" title="Toggle sidebar (Ctrl+B)">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div class="brand">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+            <line x1="12" y1="22.08" x2="12" y2="12"/>
+          </svg>
+          <span>KnowledgeBox</span>
+        </div>
+      </div>
+
+      <div class="topbar-search">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="global-search" type="text" placeholder="Search every word in every doc…" />
+        <kbd class="kbd-hint">Ctrl K</kbd>
+      </div>
+
+      <div class="topbar-right">
+        <button id="connection-pill" class="connection-pill" title="Realtime connection">
+          <span class="pill-dot"></span>
+          <span id="pill-label">Live</span>
+        </button>
+        <button id="cmd-palette-btn" class="icon-btn" title="Command palette (Ctrl+Shift+P)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        </button>
+        <button id="new-doc-btn" class="btn btn-primary btn-sm" title="New document (Ctrl+N)">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New
+        </button>
+        <button id="theme-toggle" class="icon-btn" title="Toggle theme (Ctrl+Shift+L)">
+          <svg id="theme-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        </button>
+        <div class="user-menu">
+          <button id="user-menu-btn" class="user-menu-btn">
+            <span id="user-avatar" class="user-avatar">?</span>
+            <span id="user-name" class="user-name">…</span>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div id="user-dropdown" class="user-dropdown" hidden>
+            <div class="user-dropdown-header">
+              <div id="user-email-display" class="user-email"></div>
+            </div>
+            <button data-action="profile"   class="dropdown-item">Edit profile</button>
+            <button data-action="export"    class="dropdown-item">Export all docs (.json)</button>
+            <button data-action="import"    class="dropdown-item">Import docs (.json)</button>
+            <button data-action="shortcuts" class="dropdown-item">Keyboard shortcuts</button>
+            <div class="dropdown-divider"></div>
+            <button data-action="logout"    class="dropdown-item dropdown-danger">Sign out</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="main">
+      <!-- Sidebar -->
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-tools">
+          <select id="sort-select" class="sort-select">
+            <option value="updated">Recently updated</option>
+            <option value="created">Recently created</option>
+            <option value="title">Title A→Z</option>
+            <option value="title-desc">Title Z→A</option>
+          </select>
+          <div class="filter-tags" id="filter-tags"></div>
+        </div>
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">
+            <span id="doc-count-label">All documents</span>
+            <span id="doc-count" class="badge">0</span>
+          </div>
+        </div>
+        <div id="doc-list" class="doc-list"></div>
+      </aside>
+
+      <!-- Workspace -->
+      <main class="workspace">
+
+        <!-- Welcome -->
+        <section id="welcome-view" class="welcome-view">
+          <div class="welcome-card">
+            <div class="welcome-logo">
+              <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                <line x1="12" y1="22.08" x2="12" y2="12"/>
+              </svg>
+            </div>
+            <h2>Welcome, <span id="welcome-name">friend</span>.</h2>
+            <p>Search every word across every doc. Edit in markdown. Save with autosave. Sync across all your devices instantly.</p>
+            <div class="welcome-actions">
+              <button class="btn btn-primary" id="welcome-new">+ Create your first doc</button>
+              <button class="btn btn-ghost" id="welcome-sample">Load sample runbooks</button>
+            </div>
+            <div class="welcome-tips">
+              <div class="tip"><kbd>Ctrl K</kbd> Search</div>
+              <div class="tip"><kbd>Ctrl N</kbd> New</div>
+              <div class="tip"><kbd>Ctrl S</kbd> Save</div>
+              <div class="tip"><kbd>Ctrl Shift P</kbd> Commands</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Search results -->
+        <section id="search-view" class="search-view" hidden>
+          <div class="search-view-header">
+            <h2 id="search-view-title">Search results</h2>
+            <button id="clear-search-btn" class="btn btn-ghost btn-sm">Clear</button>
+          </div>
+          <div id="search-results" class="search-results"></div>
+        </section>
+
+        <!-- Doc view -->
+        <section id="doc-view" class="doc-view" hidden>
+          <div class="doc-view-toolbar">
+            <div class="doc-view-meta">
+              <h1 id="doc-view-title"></h1>
+              <div class="doc-view-submeta">
+                <span id="doc-view-updated"></span>
+                <span class="dot">•</span>
+                <span id="doc-view-words"></span>
+                <span class="dot">•</span>
+                <span id="doc-view-reading"></span>
+                <span class="dot">•</span>
+                <span id="doc-view-tags" class="tag-row"></span>
+              </div>
+            </div>
+            <div class="doc-view-actions">
+              <div id="match-nav" class="match-nav" hidden>
+                <span id="match-counter">0 / 0</span>
+                <button id="prev-match" class="icon-btn" title="Previous (Shift+Enter)">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <button id="next-match" class="icon-btn" title="Next (Enter)">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+              </div>
+              <button id="pin-btn"      class="icon-btn" title="Pin doc">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14l-1.4-1.4A2 2 0 0 1 17 14.2V9a5 5 0 0 0-10 0v5.2c0 .5-.2 1-.6 1.4L5 17z"/></svg>
+              </button>
+              <button id="share-btn"    class="icon-btn" title="Share">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              </button>
+              <button id="history-btn"  class="icon-btn" title="Version history">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              </button>
+              <button id="print-btn"    class="icon-btn" title="Print / PDF (Ctrl+P)">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              </button>
+              <button id="edit-btn"     class="btn btn-ghost btn-sm">Edit</button>
+              <button id="delete-btn"   class="btn btn-danger-ghost btn-sm">Delete</button>
+            </div>
+          </div>
+          <article id="doc-rendered" class="doc-rendered markdown-body"></article>
+        </section>
+
+        <!-- Editor -->
+        <section id="editor-view" class="editor-view" hidden>
+          <div class="editor-toolbar">
+            <input id="editor-title" class="editor-title" placeholder="Untitled document…" />
+            <input id="editor-tags"  class="editor-tags"  placeholder="Tags (comma separated)" />
+            <div class="editor-actions">
+              <button id="editor-preview-toggle" class="btn btn-ghost btn-sm">Preview</button>
+              <button id="editor-cancel" class="btn btn-ghost btn-sm">Done</button>
+              <button id="editor-save"   class="btn btn-primary btn-sm">Save</button>
+            </div>
+          </div>
+          <div class="editor-format-bar" id="editor-format-bar">
+            <button type="button" data-md="heading"   title="Heading">H</button>
+            <button type="button" data-md="bold"      title="Bold (Ctrl+B)"><b>B</b></button>
+            <button type="button" data-md="italic"    title="Italic (Ctrl+I)"><i>I</i></button>
+            <button type="button" data-md="code"      title="Inline code">&lt;/&gt;</button>
+            <button type="button" data-md="codeblock" title="Code block">{ }</button>
+            <button type="button" data-md="list"      title="Bullet list">•</button>
+            <button type="button" data-md="numlist"   title="Numbered list">1.</button>
+            <button type="button" data-md="quote"     title="Quote">❝</button>
+            <button type="button" data-md="link"      title="Link (Ctrl+K)">🔗</button>
+            <button type="button" data-md="table"     title="Table">⊞</button>
+            <button type="button" data-md="hr"        title="Divider">―</button>
+          </div>
+          <div class="editor-body">
+            <textarea id="editor-content" class="editor-content" spellcheck="true" placeholder="Write in markdown… # headings, **bold**, `code`, ```fenced code```, - lists, [links](url)"></textarea>
+            <div id="editor-preview" class="editor-preview markdown-body" hidden></div>
+          </div>
+          <div class="editor-statusbar">
+            <span id="editor-stats">0 words · 0 chars</span>
+            <span id="editor-saved-state" class="muted">Idle</span>
+          </div>
+        </section>
+
+      </main>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast" hidden></div>
+
+    <!-- Modal -->
+    <div id="modal-overlay" class="modal-overlay" hidden>
+      <div class="modal" id="modal">
+        <div class="modal-header">
+          <h3 id="modal-title">Modal</h3>
+          <button class="icon-btn" id="modal-close" title="Close (Esc)">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body" id="modal-body"></div>
+        <div class="modal-footer" id="modal-footer"></div>
+      </div>
+    </div>
+
+    <!-- Command palette -->
+    <div id="cmd-palette" class="cmd-palette" hidden>
+      <div class="cmd-palette-inner">
+        <input id="cmd-palette-input" type="text" placeholder="Type a command or doc title…" />
+        <div id="cmd-palette-results" class="cmd-palette-results"></div>
+        <div class="cmd-palette-hint">
+          <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+          <span><kbd>Enter</kbd> select</span>
+          <span><kbd>Esc</kbd> close</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hidden import file input -->
+    <input id="import-file-input" type="file" accept="application/json" hidden />
+  </div>
+
+</body>
+</html>
