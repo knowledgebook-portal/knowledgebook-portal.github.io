@@ -136,36 +136,230 @@ async function bootAuth() {
 
 async function onSignedIn(user) {
   state.user = user;
+
+  // Load profile (created by DB trigger). Retry once if trigger hasn't fired yet.
+  let profile = await fetchProfile(user.id);
+  if (!profile) {
+    await new Promise(r => setTimeout(r, 600));
+    profile = await fetchProfile(user.id);
+  }
+  state.profile = profile || { id: user.id, email: user.email, role: 'viewer', status: 'pending', display_name: user.email.split('@')[0] };
+
+  // Gate access: only 'active' users see the app
+  if (state.profile.status !== 'active') {
+    $('#auth-screen').hidden = true;
+    $('#app').hidden = true;
+    $('#pending-screen').hidden = false;
+    $('#pending-msg').innerHTML = state.profile.status === 'disabled'
+      ? 'Your account has been disabled.<br/>Contact an admin if this is unexpected.'
+      : 'Your account has been created.<br/>An admin needs to approve access before you can use the app.';
+    return;
+  }
+
+  $('#pending-screen').hidden = true;
   $('#auth-screen').hidden = true;
   $('#app').hidden = false;
 
-  // load profile (or create the default one if trigger hasn't fired yet)
-  const { data: prof } = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
-  state.profile = prof || { id: user.id, display_name: user.email.split('@')[0] };
   renderUserChip();
-
+  applyRoleUI();
   await loadDocs();
   subscribeRealtime();
   if (state.docs.length === 0) showView('welcome');
   else { state.currentDocId = state.docs[0].id; showView('doc'); }
 }
 
+async function fetchProfile(userId) {
+  const { data } = await sb.from('profiles').select('*').eq('id', userId).maybeSingle();
+  return data;
+}
+
 function onSignedOut() {
   state.user = null; state.profile = null; state.docs = [];
   unsubscribeRealtime();
   $('#app').hidden = true;
+  $('#pending-screen').hidden = true;
   $('#auth-screen').hidden = false;
   $('#auth-form').reset();
+  setAuthTab('signin');
 }
 
 async function signOut() { await sb.auth.signOut(); }
 
+async function refreshPendingStatus() {
+  if (!state.user) return;
+  const profile = await fetchProfile(state.user.id);
+  if (profile && profile.status === 'active') {
+    state.profile = profile;
+    await onSignedIn(state.user);
+  } else {
+    toast('Still pending — ask an admin to approve.', 'error');
+  }
+}
+
+/* ----- Admin: manage users ----- */
+
+async function openManageUsers() {
+  if (!state.isAdmin) { toast('Admin only', 'error'); return; }
+  openModal({
+    title: 'Manage users',
+    body: '<div style="text-align:center;color:var(--text-muted);padding:24px;">Loading…</div>',
+    footer: `<button class="btn btn-ghost btn-sm" id="mu-close">Close</button>`,
+    size: 'modal-lg',
+  });
+  $('#mu-close').onclick = closeModal;
+
+  const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending: false });
+  if (error) { $('#modal-body').textContent = error.message; return; }
+
+  $('#modal-body').innerHTML = `
+    <table class="users-table">
+      <thead><tr><th>User</th><th>Role</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        ${data.map(u => `
+          <tr data-id="${u.id}">
+            <td data-label="User">
+              <div style="font-weight:500;">${esc(u.display_name || '(no name)')}</div>
+              <div style="font-size:11.5px;color:var(--text-muted);">${esc(u.email || '')}</div>
+            </td>
+            <td data-label="Role">
+              <select data-field="role" ${u.id === state.user.id ? 'disabled' : ''}>
+                <option value="admin"  ${u.role==='admin'?'selected':''}>admin</option>
+                <option value="editor" ${u.role==='editor'?'selected':''}>editor</option>
+                <option value="viewer" ${u.role==='viewer'?'selected':''}>viewer</option>
+              </select>
+            </td>
+            <td data-label="Status">
+              <select data-field="status" ${u.id === state.user.id ? 'disabled' : ''}>
+                <option value="active"   ${u.status==='active'?'selected':''}>active</option>
+                <option value="pending"  ${u.status==='pending'?'selected':''}>pending</option>
+                <option value="disabled" ${u.status==='disabled'?'selected':''}>disabled</option>
+              </select>
+            </td>
+            <td class="row-actions">
+              ${u.id === state.user.id ? '<span style="font-size:11px;color:var(--text-muted);">you</span>'
+                : `<button class="btn btn-ghost btn-sm" data-act="save" data-id="${u.id}">Save</button>`}
+            </td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+    <p style="margin-top:14px;font-size:12px;color:var(--text-muted);">
+      Set status to <b>active</b> to approve a pending user.
+      <b>Disabled</b> users keep their data but cannot sign in until re-enabled.
+    </p>
+  `;
+
+  $('#modal-body').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-act="save"]');
+    if (!btn) return;
+    const tr = btn.closest('tr');
+    const id = tr.dataset.id;
+    const role   = tr.querySelector('select[data-field="role"]').value;
+    const status = tr.querySelector('select[data-field="status"]').value;
+    btn.disabled = true;
+    const { error } = await sb.from('profiles').update({ role, status }).eq('id', id);
+    btn.disabled = false;
+    if (error) toast(error.message, 'error');
+    else toast('User updated', 'success');
+  });
+}
+
+async function openInvites() {
+  if (!state.isAdmin) { toast('Admin only', 'error'); return; }
+  const body = `
+    <p style="margin:0 0 14px;color:var(--text-soft);font-size:13px;">
+      Pre-approve an email. When that person signs up, they're auto-activated with the role you set — no manual approval needed.
+    </p>
+    <div class="form-group">
+      <label>Email to invite</label>
+      <input id="iv-email" type="email" placeholder="someone@example.com" />
+    </div>
+    <div class="form-group">
+      <label>Role on signup</label>
+      <select id="iv-role">
+        <option value="editor">Editor (can read + write)</option>
+        <option value="viewer">Viewer (read only)</option>
+        <option value="admin">Admin (full access)</option>
+      </select>
+    </div>
+    <button class="btn btn-primary btn-sm" id="iv-add">Add invite</button>
+    <hr style="border:none;border-top:1px solid var(--border);margin:18px 0;"/>
+    <h4 style="margin:0 0 10px;font-size:11.5px;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);">Pending invites</h4>
+    <div id="iv-list"></div>
+  `;
+  openModal({ title: 'Invite users', body, footer: `<button class="btn btn-ghost btn-sm" id="iv-close">Close</button>`, size: 'modal-lg' });
+  $('#iv-close').onclick = closeModal;
+
+  const refreshList = async () => {
+    const { data, error } = await sb.from('invites').select('*').order('created_at', { ascending: false });
+    const wrap = $('#iv-list');
+    if (error) { wrap.textContent = error.message; return; }
+    if (!data.length) {
+      wrap.innerHTML = '<p style="color:var(--text-muted);font-size:12.5px;">No pending invites.</p>';
+      return;
+    }
+    wrap.innerHTML = data.map(i => `
+      <div class="invite-row">
+        <div class="invite-email">${esc(i.email)}</div>
+        <div class="invite-role">${esc(i.role)}</div>
+        <button class="btn btn-danger-ghost btn-sm" data-revoke="${esc(i.email)}">Revoke</button>
+      </div>`).join('');
+    $$('[data-revoke]', wrap).forEach(b => b.onclick = async () => {
+      const { error } = await sb.from('invites').delete().eq('email', b.dataset.revoke);
+      if (error) toast(error.message, 'error');
+      else { toast('Invite removed'); refreshList(); }
+    });
+  };
+  await refreshList();
+
+  $('#iv-add').onclick = async () => {
+    const email = $('#iv-email').value.trim().toLowerCase();
+    const role  = $('#iv-role').value;
+    if (!email) return toast('Enter an email', 'error');
+    const { error } = await sb.from('invites').upsert({ email, role, invited_by: state.user.id });
+    if (error) return toast(error.message, 'error');
+    $('#iv-email').value = '';
+    toast(`Invited ${email} as ${role}`, 'success');
+    refreshList();
+  };
+}
+
 function renderUserChip() {
   const name = state.profile?.display_name || state.user.email.split('@')[0];
+  const role = state.profile?.role || 'viewer';
   $('#user-name').textContent = name;
   $('#user-avatar').textContent = (name[0] || '?').toUpperCase();
   $('#user-email-display').textContent = state.user.email;
   $('#welcome-name').textContent = name;
+
+  const badge = $('#user-role-badge');
+  badge.textContent = role;
+  badge.className = 'role-badge ' + role;
+  badge.hidden = false;
+
+  $('#user-role-display').innerHTML = `Role: <span class="role-badge ${role}">${role}</span>`;
+}
+
+function applyRoleUI() {
+  const role = state.profile?.role || 'viewer';
+  const canWrite = role === 'admin' || role === 'editor';
+  const isAdmin  = role === 'admin';
+
+  // Show admin-only menu items
+  $('#manage-users-btn').hidden = !isAdmin;
+  $('#invites-btn').hidden = !isAdmin;
+
+  // Disable write actions for viewers
+  $('#new-doc-btn').style.display = canWrite ? '' : 'none';
+  $('#welcome-new').style.display = canWrite ? '' : 'none';
+  $('#welcome-sample').style.display = canWrite ? '' : 'none';
+  $('#import-btn').style.display = canWrite ? '' : 'none';
+  $('#edit-btn').style.display = canWrite ? '' : 'none';
+  $('#delete-btn').style.display = canWrite ? '' : 'none';
+  $('#pin-btn').style.display = canWrite ? '' : 'none';
+  $('#share-btn').style.display = canWrite ? '' : 'none';
+
+  state.canWrite = canWrite;
+  state.isAdmin = isAdmin;
 }
 
 /* ============================================================================
@@ -619,7 +813,7 @@ function makeSnippet(text, terms) {
 const COMMANDS = [
   { id: 'new',         kind: 'cmd', label: 'Create new document',        run: () => { state.currentDocId = null; showView('editor'); } },
   { id: 'search',      kind: 'cmd', label: 'Focus search',                run: () => $('#global-search').focus() },
-  { id: 'sidebar',     kind: 'cmd', label: 'Toggle sidebar',              run: () => $('#sidebar').classList.toggle('collapsed') },
+  { id: 'sidebar',     kind: 'cmd', label: 'Toggle sidebar',              run: toggleSidebar },
   { id: 'theme',       kind: 'cmd', label: 'Toggle dark / light theme',   run: toggleTheme },
   { id: 'preview',     kind: 'cmd', label: 'Toggle editor preview',       run: () => { if (state.activeView==='editor') togglePreview(); } },
   { id: 'history',     kind: 'cmd', label: 'Show version history',        run: () => openVersionHistory() },
@@ -628,6 +822,8 @@ const COMMANDS = [
   { id: 'import',      kind: 'cmd', label: 'Import docs (.json)',         run: triggerImport },
   { id: 'samples',     kind: 'cmd', label: 'Load sample runbooks',        run: seedSamples },
   { id: 'profile',     kind: 'cmd', label: 'Edit profile',                run: openProfile },
+  { id: 'users',       kind: 'cmd', label: 'Manage users (admin)',        run: () => state.isAdmin ? openManageUsers() : toast('Admin only', 'error') },
+  { id: 'invites',     kind: 'cmd', label: 'Invite users (admin)',        run: () => state.isAdmin ? openInvites() : toast('Admin only', 'error') },
   { id: 'shortcuts',   kind: 'cmd', label: 'Show keyboard shortcuts',     run: openShortcuts },
   { id: 'print',       kind: 'cmd', label: 'Print / save as PDF',         run: () => window.print() },
   { id: 'logout',      kind: 'cmd', label: 'Sign out',                    run: signOut },
@@ -907,6 +1103,32 @@ async function seedSamples() {
 }
 
 /* ============================================================================
+   MOBILE SIDEBAR DRAWER
+   ============================================================================ */
+
+function isMobile() { return window.matchMedia('(max-width: 640px)').matches; }
+
+function toggleSidebar() {
+  const sb = $('#sidebar');
+  if (isMobile()) {
+    const open = sb.classList.toggle('collapsed') === false;
+    // After toggle: if NOT collapsed -> drawer is OPEN
+    if (!sb.classList.contains('collapsed')) openSidebarMobile();
+    else closeSidebarMobile();
+  } else {
+    sb.classList.toggle('collapsed');
+  }
+}
+function openSidebarMobile() {
+  $('#sidebar').classList.remove('collapsed');
+  $('#sidebar-backdrop').hidden = false;
+}
+function closeSidebarMobile() {
+  $('#sidebar').classList.add('collapsed');
+  $('#sidebar-backdrop').hidden = true;
+}
+
+/* ============================================================================
    THEME
    ============================================================================ */
 
@@ -980,8 +1202,13 @@ function bindEvents() {
   $('#auth-form').addEventListener('submit', handleAuthSubmit);
   $('#forgot-password').addEventListener('click', handleForgotPassword);
 
+  // Pending screen
+  $('#pending-refresh').addEventListener('click', refreshPendingStatus);
+  $('#pending-signout').addEventListener('click', signOut);
+
   // Top bar
-  $('#toggle-sidebar').addEventListener('click', () => $('#sidebar').classList.toggle('collapsed'));
+  $('#toggle-sidebar').addEventListener('click', toggleSidebar);
+  $('#sidebar-backdrop').addEventListener('click', () => { closeSidebarMobile(); });
   $('#theme-toggle').addEventListener('click', toggleTheme);
   $('#new-doc-btn').addEventListener('click', () => { state.currentDocId = null; showView('editor'); });
   $('#cmd-palette-btn').addEventListener('click', openCmdPalette);
@@ -1003,10 +1230,18 @@ function bindEvents() {
     else if (act === 'import') triggerImport();
     else if (act === 'profile') openProfile();
     else if (act === 'shortcuts') openShortcuts();
+    else if (act === 'users')   openManageUsers();
+    else if (act === 'invites') openInvites();
   });
 
   // Sidebar sort
   $('#sort-select').addEventListener('change', (e) => { state.sort = e.target.value; renderDocList(); });
+
+  // On mobile, tapping a doc closes the sidebar drawer
+  $('#doc-list').addEventListener('click', () => { if (isMobile()) closeSidebarMobile(); });
+
+  // Close sidebar drawer on viewport resize back to desktop
+  window.addEventListener('resize', debounce(() => { if (!isMobile()) $('#sidebar-backdrop').hidden = true; }, 100));
 
   // Search
   const onSearch = debounce(() => performSearch($('#global-search').value), 120);
@@ -1126,7 +1361,7 @@ function bindEvents() {
       if (document.activeElement?.tagName === 'TEXTAREA' && state.activeView === 'editor') {
         e.preventDefault(); applyFormat('bold'); return;
       }
-      e.preventDefault(); $('#sidebar').classList.toggle('collapsed'); return;
+      e.preventDefault(); toggleSidebar(); return;
     }
     if (ctrl && e.key.toLowerCase() === 'i' && state.activeView === 'editor' && document.activeElement?.tagName === 'TEXTAREA') {
       e.preventDefault(); applyFormat('italic'); return;
@@ -1155,6 +1390,7 @@ function bindEvents() {
 applyTheme(localStorage.getItem('kb.theme') || 'light');
 bindEvents();
 setAuthTab('signin');
+if (isMobile()) $('#sidebar').classList.add('collapsed');
 
 (async () => {
   // Public share-link view bypasses auth

@@ -60,12 +60,48 @@ Just open `index.html` in any modern browser. No server needed.
 
 For sharing with friends or using from your phone, host the static files on **Netlify** (free) or **Vercel** (free) — see "Deploy" below.
 
-### 5. Create your first account
+### 5. Create your first (admin) account
 
 1. Open the app → click **Create account** tab.
 2. Enter email + password + display name → **Create account**.
 3. Check your inbox for a confirmation link (Supabase sends it). Click it.
-4. Come back → **Sign in** → you're in.
+4. Come back → **Sign in** → you'll see a **"Waiting for approval"** screen. This is expected.
+
+### 6. Promote yourself to admin (one-time, ~30 seconds)
+
+In Supabase → **SQL Editor** → run this (replacing your email):
+
+```sql
+update public.profiles
+set role = 'admin', status = 'active'
+where email = 'your-email@example.com';
+```
+
+Back in the app → click **Check again** on the pending screen. You're in as admin.
+
+## Roles & permissions
+
+| Role | Can do |
+|---|---|
+| **admin** | Everything: create / edit / delete *any* doc, manage users (approve / disable / change roles), invite new users |
+| **editor** | Create / edit / delete their own docs, view all team docs |
+| **viewer** | Read-only — see all team docs, can't create or edit |
+
+All members of your team share the same knowledge base. Privacy is per-team, not per-user — everyone with an active account can read all docs (which is usually what you want for a shared runbook collection). A doc's *author* can edit it; admins can edit any doc.
+
+## Adding users — two ways
+
+### Option A — Invite by email (auto-approves)
+
+As admin: user menu → **Invite new users** → enter their email + role → **Add invite**. When they sign up with that email, they're activated automatically with the role you set.
+
+### Option B — Manual approval
+
+User signs up with any email → they see the "Waiting for approval" screen → as admin you go to **Manage users** → flip their status to **active** + pick a role → **Save**. They click **Check again** on their pending screen and they're in.
+
+## Locking someone out
+
+Admin → **Manage users** → set their status to **disabled**. Their account survives but they can't sign in. Re-enable any time.
 
 ## Daily use
 

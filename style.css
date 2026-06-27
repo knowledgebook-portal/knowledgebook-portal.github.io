@@ -837,29 +837,211 @@ kbd {
   color: var(--text-muted);
 }
 
+/* ============ Role badge + admin UI ============ */
+.role-badge {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  color: var(--text-soft);
+}
+.role-badge.admin  { background: #ffe7ce; color: #a86b00; border-color: #f3d8b0; }
+.role-badge.editor { background: var(--primary-soft); color: var(--primary); border-color: transparent; }
+.role-badge.viewer { background: var(--bg-soft); color: var(--text-soft); }
+[data-theme="dark"] .role-badge.admin { background: #3a2a10; color: #f3c87a; border-color: #5a3e1a; }
+
+.user-role { font-size: 11px; color: var(--text-soft); margin-top: 4px; }
+.user-role .role-badge { font-size: 9px; padding: 1px 6px; }
+
+.pending-screen {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  padding: 24px;
+  z-index: 90;
+}
+
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.users-table th, .users-table td {
+  padding: 9px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.users-table th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.users-table tr:last-child td { border-bottom: none; }
+.users-table select { padding: 5px 8px; font-size: 12.5px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); }
+.users-table .row-actions { display: flex; gap: 4px; justify-content: flex-end; }
+
+.invite-row {
+  display: flex; gap: 8px; align-items: center;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+}
+.invite-row .invite-email { flex: 1; font-family: var(--font-mono); font-size: 12px; }
+.invite-row .invite-role { font-size: 11px; color: var(--text-soft); }
+
+.viewer-banner {
+  margin: 0 24px 0;
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+/* ============ Sidebar backdrop (mobile drawer) ============ */
+.sidebar-backdrop {
+  position: fixed;
+  inset: var(--topbar-h) 0 0 0;
+  background: rgba(10, 12, 20, 0.4);
+  z-index: 9;
+  backdrop-filter: blur(2px);
+  animation: fadein 0.18s ease-out;
+}
+@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+
 /* ============ Responsive ============ */
 @media (max-width: 860px) {
-  :root { --sidebar-w: 260px; }
+  :root { --sidebar-w: 280px; }
   .topbar-search { max-width: none; }
   .kbd-hint { display: none; }
   .doc-view-toolbar { padding: 16px 20px; flex-direction: column; align-items: stretch; }
-  .doc-rendered { padding: 20px; }
-  .editor-toolbar { grid-template-columns: 1fr; }
-  .editor-content, .editor-preview { padding: 16px 20px; }
+  .doc-rendered { padding: 20px 20px 80px; }
+  .editor-toolbar { grid-template-columns: 1fr; gap: 8px; padding: 12px 16px; }
+  .editor-title { font-size: 18px; }
+  .editor-actions { justify-content: flex-end; }
+  .editor-content { padding: 16px 18px; font-size: 14px; line-height: 1.6; }
   .editor-preview { display: none; }
+  .editor-format-bar { padding: 6px 12px; }
+  .editor-format-bar button { min-width: 40px; height: 36px; }
+  .welcome-card h2 { font-size: 24px; }
+  .welcome-card p { font-size: 14px; }
 }
 @media (max-width: 640px) {
+  /* Drawer-style sidebar */
   .sidebar {
-    position: absolute;
-    inset: var(--topbar-h) auto 0 0;
+    position: fixed;
+    top: var(--topbar-h);
+    left: 0;
     height: calc(100% - var(--topbar-h));
     z-index: 10;
     box-shadow: var(--shadow-md);
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    margin-left: 0;
+    width: min(var(--sidebar-w), 86vw);
   }
-  .topbar { padding: 0 10px; gap: 8px; }
+  .sidebar:not(.collapsed) { transform: translateX(0); }
+  .sidebar.collapsed { transform: translateX(-100%); margin-left: 0; }
+
+  .topbar { padding: 0 10px; gap: 6px; height: var(--topbar-h); }
+  .topbar-search { padding: 5px 8px; }
   .user-name { display: none; }
+  .user-role-badge { display: none; }
   .brand span { display: none; }
   .connection-pill #pill-label { display: none; }
+  .connection-pill { padding: 4px 8px; }
+  #new-doc-btn { padding: 6px 8px; }
+  #cmd-palette-btn { display: none; }
+
+  /* Doc view: stack toolbar; bigger touch targets */
+  .doc-view-toolbar { padding: 14px 16px; gap: 10px; }
+  .doc-view-meta h1 { font-size: 22px; }
+  .doc-view-actions { flex-wrap: wrap; gap: 4px; }
+  .doc-view-actions .icon-btn { width: 38px; height: 38px; }
+  .doc-rendered { padding: 18px 18px 90px; }
+  .markdown-body { font-size: 14.5px; line-height: 1.65; }
+  .markdown-body h1 { font-size: 1.6em; }
+  .markdown-body h2 { font-size: 1.3em; }
+  .markdown-body pre { font-size: 13px; }
+
+  /* Welcome: full-width buttons */
+  .welcome-view { padding: 24px 18px; }
+  .welcome-logo { width: 72px; height: 72px; margin-bottom: 16px; }
+  .welcome-card h2 { font-size: 22px; }
+  .welcome-actions { flex-direction: column; gap: 8px; }
+  .welcome-actions .btn { width: 100%; justify-content: center; }
+  .welcome-tips { gap: 6px; }
+  .welcome-tips .tip { font-size: 11px; padding: 5px 8px; }
+
+  /* Auth screen: fit small phones */
+  .auth-screen { padding: 12px; }
+  .auth-card { padding: 28px 22px 24px; max-width: none; }
+  .auth-logo { width: 60px; height: 60px; margin-bottom: 14px; }
+  .auth-card h1 { font-size: 22px; }
+
+  /* Modals: full-screen on phone */
+  .modal-overlay { padding: 0; align-items: stretch; }
+  .modal { border-radius: 0; max-height: 100vh; max-width: none; }
+  .modal-body { padding: 14px 16px; }
+
+  /* Command palette: full height on phone */
+  .cmd-palette { padding-top: 6vh; padding-left: 8px; padding-right: 8px; }
+  .cmd-palette-inner { max-width: none; }
+  .cmd-palette-results { max-height: 65vh; }
+
+  /* Sidebar tweaks */
+  .sidebar-tools { padding: 10px; gap: 8px; }
+  .doc-item { padding: 12px; }
+  .doc-item-title { font-size: 14px; }
+
+  /* Toast stays readable */
+  .toast { left: 12px; right: 12px; transform: translateY(20px); max-width: none; bottom: 14px; }
+  .toast.show { transform: translateY(0); }
+
+  /* Users table → cards */
+  .users-table thead { display: none; }
+  .users-table, .users-table tbody, .users-table tr, .users-table td { display: block; width: 100%; }
+  .users-table tr {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+    padding: 10px 12px;
+  }
+  .users-table td { border: none; padding: 4px 0; }
+  .users-table td:before {
+    content: attr(data-label);
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    display: block;
+    margin-bottom: 2px;
+  }
+  .users-table td.row-actions:before { display: none; }
+  .users-table .row-actions { justify-content: flex-start; }
+}
+@media (max-width: 380px) {
+  .topbar { gap: 4px; }
+  #new-doc-btn span,
+  #new-doc-btn { font-size: 0; padding: 6px 6px; }
+  #new-doc-btn svg { margin: 0; }
+}
+
+/* Safe-area padding for iOS notch */
+@supports (padding: max(0px)) {
+  .topbar { padding-left: max(10px, env(safe-area-inset-left)); padding-right: max(10px, env(safe-area-inset-right)); }
+  .doc-rendered { padding-bottom: max(80px, env(safe-area-inset-bottom)); }
 }
 
 /* ============ Print ============ */
