@@ -55,55 +55,21 @@ const state = {
 };
 
 /* ============================================================================
-   AUTH
+   AUTH (sign-in only — accounts are admin-created)
    ============================================================================ */
 
-const AUTH_TABS = {
-  signin: { submit: 'Sign in',         showPassword: true,  showName: false },
-  signup: { submit: 'Create account',  showPassword: true,  showName: true  },
-  magic:  { submit: 'Send magic link', showPassword: false, showName: false },
-};
-let authTab = 'signin';
-
-function setAuthTab(name) {
-  authTab = name;
-  $$('.auth-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  const cfg = AUTH_TABS[name];
-  $('#auth-password-group').hidden = !cfg.showPassword;
-  $('#auth-password').required = cfg.showPassword;
-  $('#auth-name-group').hidden = !cfg.showName;
-  $('#auth-submit').textContent = cfg.submit;
-  $('#auth-error').hidden = true;
-  $('#auth-info').hidden = true;
-}
+function setAuthTab() { /* no-op: kept so old refs don't break */ }
 
 async function handleAuthSubmit(e) {
   e.preventDefault();
   const email = $('#auth-email').value.trim();
   const password = $('#auth-password').value;
-  const name = $('#auth-name').value.trim();
-  const errEl = $('#auth-error'), infoEl = $('#auth-info');
-  errEl.hidden = true; infoEl.hidden = true;
+  const errEl = $('#auth-error');
+  errEl.hidden = true;
   $('#auth-submit').disabled = true;
-
   try {
-    if (authTab === 'signin') {
-      const { error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-    } else if (authTab === 'signup') {
-      const { error } = await sb.auth.signUp({
-        email, password,
-        options: { data: { display_name: name || email.split('@')[0] } },
-      });
-      if (error) throw error;
-      infoEl.textContent = 'Check your inbox to confirm your email. After confirming, sign in.';
-      infoEl.hidden = false;
-    } else if (authTab === 'magic') {
-      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.href } });
-      if (error) throw error;
-      infoEl.textContent = 'Magic link sent — check your inbox.';
-      infoEl.hidden = false;
-    }
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) throw error;
   } catch (err) {
     errEl.textContent = err.message || 'Sign in failed.';
     errEl.hidden = false;
@@ -112,15 +78,26 @@ async function handleAuthSubmit(e) {
   }
 }
 
-async function handleForgotPassword() {
-  const email = $('#auth-email').value.trim();
-  if (!email) { showAuthErr('Enter your email first.'); return; }
-  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.href });
-  if (error) showAuthErr(error.message);
-  else showAuthInfo('Password reset email sent.');
+async function handlePasswordChange(e) {
+  e.preventDefault();
+  const nw = $('#pw-new').value;
+  const cf = $('#pw-confirm').value;
+  const errEl = $('#pw-error');
+  errEl.hidden = true;
+  if (nw.length < 8) { errEl.textContent = 'Use at least 8 characters.'; errEl.hidden = false; return; }
+  if (nw !== cf)     { errEl.textContent = 'Passwords do not match.'; errEl.hidden = false; return; }
+
+  const { error: pwErr } = await sb.auth.updateUser({ password: nw });
+  if (pwErr) { errEl.textContent = pwErr.message; errEl.hidden = false; return; }
+
+  await sb.from('profiles').update({ must_change_password: false }).eq('id', state.user.id);
+  toast('Password updated', 'success');
+
+  // Re-fetch profile and proceed into the app
+  state.profile = await fetchProfile(state.user.id);
+  $('#pwchange-screen').hidden = true;
+  await enterApp();
 }
-function showAuthErr(msg)  { const e = $('#auth-error'); e.textContent = msg; e.hidden = false; $('#auth-info').hidden = true; }
-function showAuthInfo(msg) { const e = $('#auth-info');  e.textContent = msg; e.hidden = false; $('#auth-error').hidden = true; }
 
 async function bootAuth() {
   const { data: { session } } = await sb.auth.getSession();
@@ -136,30 +113,33 @@ async function bootAuth() {
 
 async function onSignedIn(user) {
   state.user = user;
+  state.profile = await fetchProfile(user.id);
 
-  // Load profile (created by DB trigger). Retry once if trigger hasn't fired yet.
-  let profile = await fetchProfile(user.id);
-  if (!profile) {
-    await new Promise(r => setTimeout(r, 600));
-    profile = await fetchProfile(user.id);
-  }
-  state.profile = profile || { id: user.id, email: user.email, role: 'viewer', status: 'pending', display_name: user.email.split('@')[0] };
-
-  // Gate access: only 'active' users see the app
-  if (state.profile.status !== 'active') {
-    $('#auth-screen').hidden = true;
-    $('#app').hidden = true;
-    $('#pending-screen').hidden = false;
-    $('#pending-msg').innerHTML = state.profile.status === 'disabled'
-      ? 'Your account has been disabled.<br/>Contact an admin if this is unexpected.'
-      : 'Your account has been created.<br/>An admin needs to approve access before you can use the app.';
+  // No profile = account was deleted or never provisioned. Sign out and show login.
+  if (!state.profile) {
+    await sb.auth.signOut();
     return;
   }
+  // Disabled accounts are kicked out.
+  if (state.profile.status === 'disabled') {
+    await sb.auth.signOut();
+    toast('Your account is disabled. Contact an admin.', 'error');
+    return;
+  }
+  // Must change password before entering the app.
+  if (state.profile.must_change_password) {
+    $('#auth-screen').hidden = true;
+    $('#app').hidden = true;
+    $('#pwchange-screen').hidden = false;
+    return;
+  }
+  await enterApp();
+}
 
-  $('#pending-screen').hidden = true;
+async function enterApp() {
   $('#auth-screen').hidden = true;
+  $('#pwchange-screen').hidden = true;
   $('#app').hidden = false;
-
   renderUserChip();
   applyRoleUI();
   await loadDocs();
@@ -177,36 +157,137 @@ function onSignedOut() {
   state.user = null; state.profile = null; state.docs = [];
   unsubscribeRealtime();
   $('#app').hidden = true;
-  $('#pending-screen').hidden = true;
+  $('#pwchange-screen').hidden = true;
   $('#auth-screen').hidden = false;
   $('#auth-form').reset();
-  setAuthTab('signin');
 }
 
 async function signOut() { await sb.auth.signOut(); }
 
-async function refreshPendingStatus() {
-  if (!state.user) return;
-  const profile = await fetchProfile(state.user.id);
-  if (profile && profile.status === 'active') {
-    state.profile = profile;
-    await onSignedIn(state.user);
-  } else {
-    toast('Still pending — ask an admin to approve.', 'error');
-  }
+/* ----- Admin: invoke Edge Function for create/reset/delete ----- */
+async function adminFn(action, body) {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) throw new Error('Not signed in');
+  const url = SUPABASE_URL.replace(/\/$/, '') + '/functions/v1/admin-users';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${session.access_token}`,
+      'Content-Type':  'application/json',
+      'apikey':        SUPABASE_ANON,
+    },
+    body: JSON.stringify({ action, ...body }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || `Request failed (${res.status})`);
+  return out;
 }
 
-/* ----- Admin: manage users ----- */
+/* ----- Admin: add user ----- */
+async function openAddUser() {
+  if (!state.isAdmin) { toast('Admin only', 'error'); return; }
+  const body = `
+    <p style="margin:0 0 14px;color:var(--text-soft);font-size:13px;">
+      Creates the account immediately. The user will be required to change their password on first sign-in.
+    </p>
+    <div class="form-group">
+      <label>Email</label>
+      <input id="nu-email" type="email" placeholder="user@example.com" required />
+    </div>
+    <div class="form-group">
+      <label>Display name</label>
+      <input id="nu-name" type="text" placeholder="Their name (optional)" />
+    </div>
+    <div class="form-group">
+      <label>Initial password</label>
+      <div style="display:flex;gap:6px;">
+        <input id="nu-password" type="text" placeholder="Auto-generated" style="flex:1;font-family:var(--font-mono);font-size:13px;" />
+        <button type="button" class="btn btn-ghost btn-sm" id="nu-regen">↻</button>
+      </div>
+      <small style="color:var(--text-muted);font-size:11.5px;display:block;margin-top:4px;">Share this securely with the user. They'll change it on first sign-in.</small>
+    </div>
+    <div class="form-group">
+      <label>Role</label>
+      <select id="nu-role">
+        <option value="editor">Editor — can read + create + edit docs</option>
+        <option value="viewer">Viewer — read only</option>
+        <option value="admin">Admin — full access, can manage users</option>
+      </select>
+    </div>
+    <div id="nu-error" class="form-error" hidden></div>
+  `;
+  openModal({
+    title: 'Add user',
+    body,
+    footer: `<button class="btn btn-ghost btn-sm" id="nu-cancel">Cancel</button>
+             <button class="btn btn-primary btn-sm" id="nu-create">Create user</button>`,
+    size: 'modal-lg',
+  });
+  const genPw = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let s = '';
+    const a = new Uint8Array(12);
+    crypto.getRandomValues(a);
+    for (let i = 0; i < a.length; i++) s += chars[a[i] % chars.length];
+    return s;
+  };
+  $('#nu-password').value = genPw();
+  $('#nu-regen').onclick = () => { $('#nu-password').value = genPw(); };
+  $('#nu-cancel').onclick = closeModal;
+  $('#nu-create').onclick = async () => {
+    const email    = $('#nu-email').value.trim();
+    const password = $('#nu-password').value;
+    const role     = $('#nu-role').value;
+    const display_name = $('#nu-name').value.trim();
+    const errEl = $('#nu-error');
+    errEl.hidden = true;
+    if (!email || !password) { errEl.textContent = 'Email and password required.'; errEl.hidden = false; return; }
+    if (password.length < 8)  { errEl.textContent = 'Password must be at least 8 characters.'; errEl.hidden = false; return; }
+    $('#nu-create').disabled = true;
+    try {
+      await adminFn('create', { email, password, role, display_name });
+      closeModal();
+      toast(`Created ${email} as ${role}`, 'success');
+      // Show credentials once so admin can copy
+      openModal({
+        title: 'Account created',
+        body: `
+          <p style="color:var(--text-soft);font-size:13px;">Share these credentials with the user. They will be required to change the password on first sign-in.</p>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;margin-top:10px;font-family:var(--font-mono);font-size:13px;">
+            <div><b>Email:</b> ${esc(email)}</div>
+            <div style="margin-top:6px;"><b>Password:</b> ${esc(password)}</div>
+            <div style="margin-top:6px;"><b>Role:</b> ${esc(role)}</div>
+          </div>`,
+        footer: `<button class="btn btn-primary btn-sm" id="cred-copy">Copy</button>
+                 <button class="btn btn-ghost btn-sm" id="cred-close">Close</button>`,
+      });
+      $('#cred-close').onclick = closeModal;
+      $('#cred-copy').onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(`Email: ${email}\nPassword: ${password}\nRole: ${role}`);
+          toast('Copied', 'success');
+        } catch { toast('Copy failed', 'error'); }
+      };
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.hidden = false;
+      $('#nu-create').disabled = false;
+    }
+  };
+}
 
+/* ----- Admin: manage users (table) ----- */
 async function openManageUsers() {
   if (!state.isAdmin) { toast('Admin only', 'error'); return; }
   openModal({
     title: 'Manage users',
     body: '<div style="text-align:center;color:var(--text-muted);padding:24px;">Loading…</div>',
-    footer: `<button class="btn btn-ghost btn-sm" id="mu-close">Close</button>`,
+    footer: `<button class="btn btn-primary btn-sm" id="mu-add">+ Add user</button>
+             <button class="btn btn-ghost btn-sm" id="mu-close">Close</button>`,
     size: 'modal-lg',
   });
   $('#mu-close').onclick = closeModal;
+  $('#mu-add').onclick = () => { closeModal(); openAddUser(); };
 
   const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending: false });
   if (error) { $('#modal-body').textContent = error.message; return; }
@@ -216,7 +297,7 @@ async function openManageUsers() {
       <thead><tr><th>User</th><th>Role</th><th>Status</th><th></th></tr></thead>
       <tbody>
         ${data.map(u => `
-          <tr data-id="${u.id}">
+          <tr data-id="${u.id}" data-email="${esc(u.email || '')}">
             <td data-label="User">
               <div style="font-weight:500;">${esc(u.display_name || '(no name)')}</div>
               <div style="font-size:11.5px;color:var(--text-muted);">${esc(u.email || '')}</div>
@@ -231,96 +312,78 @@ async function openManageUsers() {
             <td data-label="Status">
               <select data-field="status" ${u.id === state.user.id ? 'disabled' : ''}>
                 <option value="active"   ${u.status==='active'?'selected':''}>active</option>
-                <option value="pending"  ${u.status==='pending'?'selected':''}>pending</option>
                 <option value="disabled" ${u.status==='disabled'?'selected':''}>disabled</option>
               </select>
             </td>
             <td class="row-actions">
-              ${u.id === state.user.id ? '<span style="font-size:11px;color:var(--text-muted);">you</span>'
-                : `<button class="btn btn-ghost btn-sm" data-act="save" data-id="${u.id}">Save</button>`}
+              ${u.id === state.user.id
+                ? '<span style="font-size:11px;color:var(--text-muted);">you</span>'
+                : `
+                <button class="btn btn-ghost btn-sm"        data-act="save"  data-id="${u.id}">Save</button>
+                <button class="btn btn-ghost btn-sm"        data-act="reset" data-id="${u.id}">Reset pw</button>
+                <button class="btn btn-danger-ghost btn-sm" data-act="del"   data-id="${u.id}">Delete</button>`}
             </td>
           </tr>`).join('')}
       </tbody>
     </table>
     <p style="margin-top:14px;font-size:12px;color:var(--text-muted);">
-      Set status to <b>active</b> to approve a pending user.
-      <b>Disabled</b> users keep their data but cannot sign in until re-enabled.
+      <b>Reset pw</b> issues a new temporary password (user is forced to change on next login).
+      <b>Delete</b> permanently removes the user and all their docs.
     </p>
   `;
 
   $('#modal-body').addEventListener('click', async (e) => {
-    const btn = e.target.closest('button[data-act="save"]');
+    const btn = e.target.closest('button[data-act]');
     if (!btn) return;
+    const id = btn.dataset.id;
     const tr = btn.closest('tr');
-    const id = tr.dataset.id;
-    const role   = tr.querySelector('select[data-field="role"]').value;
-    const status = tr.querySelector('select[data-field="status"]').value;
+    const email = tr.dataset.email;
+    const act = btn.dataset.act;
     btn.disabled = true;
-    const { error } = await sb.from('profiles').update({ role, status }).eq('id', id);
-    btn.disabled = false;
-    if (error) toast(error.message, 'error');
-    else toast('User updated', 'success');
+    try {
+      if (act === 'save') {
+        const role   = tr.querySelector('select[data-field="role"]').value;
+        const status = tr.querySelector('select[data-field="status"]').value;
+        const { error } = await sb.from('profiles').update({ role, status }).eq('id', id);
+        if (error) throw error;
+        toast('Saved', 'success');
+      } else if (act === 'reset') {
+        if (!confirm(`Reset password for ${email}?`)) return;
+        const pw = genTempPassword();
+        await adminFn('reset', { user_id: id, new_password: pw });
+        openModal({
+          title: 'Password reset',
+          body: `<p>New temporary password for <b>${esc(email)}</b>:</p>
+                 <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;margin-top:10px;font-family:var(--font-mono);font-size:14px;text-align:center;letter-spacing:0.1em;">${esc(pw)}</div>
+                 <p style="font-size:12px;color:var(--text-muted);margin-top:10px;">Share securely. They will be forced to change it on next sign-in.</p>`,
+          footer: `<button class="btn btn-primary btn-sm" id="rp-copy">Copy</button>
+                   <button class="btn btn-ghost btn-sm" id="rp-close">Close</button>`,
+        });
+        $('#rp-close').onclick = closeModal;
+        $('#rp-copy').onclick = async () => {
+          await navigator.clipboard.writeText(pw);
+          toast('Copied', 'success');
+        };
+      } else if (act === 'del') {
+        if (!confirm(`Delete ${email}? Their docs are removed too. This cannot be undone.`)) return;
+        await adminFn('delete', { user_id: id });
+        toast('User deleted', 'success');
+        openManageUsers(); // refresh
+      }
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
   });
 }
 
-async function openInvites() {
-  if (!state.isAdmin) { toast('Admin only', 'error'); return; }
-  const body = `
-    <p style="margin:0 0 14px;color:var(--text-soft);font-size:13px;">
-      Pre-approve an email. When that person signs up, they're auto-activated with the role you set — no manual approval needed.
-    </p>
-    <div class="form-group">
-      <label>Email to invite</label>
-      <input id="iv-email" type="email" placeholder="someone@example.com" />
-    </div>
-    <div class="form-group">
-      <label>Role on signup</label>
-      <select id="iv-role">
-        <option value="editor">Editor (can read + write)</option>
-        <option value="viewer">Viewer (read only)</option>
-        <option value="admin">Admin (full access)</option>
-      </select>
-    </div>
-    <button class="btn btn-primary btn-sm" id="iv-add">Add invite</button>
-    <hr style="border:none;border-top:1px solid var(--border);margin:18px 0;"/>
-    <h4 style="margin:0 0 10px;font-size:11.5px;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);">Pending invites</h4>
-    <div id="iv-list"></div>
-  `;
-  openModal({ title: 'Invite users', body, footer: `<button class="btn btn-ghost btn-sm" id="iv-close">Close</button>`, size: 'modal-lg' });
-  $('#iv-close').onclick = closeModal;
-
-  const refreshList = async () => {
-    const { data, error } = await sb.from('invites').select('*').order('created_at', { ascending: false });
-    const wrap = $('#iv-list');
-    if (error) { wrap.textContent = error.message; return; }
-    if (!data.length) {
-      wrap.innerHTML = '<p style="color:var(--text-muted);font-size:12.5px;">No pending invites.</p>';
-      return;
-    }
-    wrap.innerHTML = data.map(i => `
-      <div class="invite-row">
-        <div class="invite-email">${esc(i.email)}</div>
-        <div class="invite-role">${esc(i.role)}</div>
-        <button class="btn btn-danger-ghost btn-sm" data-revoke="${esc(i.email)}">Revoke</button>
-      </div>`).join('');
-    $$('[data-revoke]', wrap).forEach(b => b.onclick = async () => {
-      const { error } = await sb.from('invites').delete().eq('email', b.dataset.revoke);
-      if (error) toast(error.message, 'error');
-      else { toast('Invite removed'); refreshList(); }
-    });
-  };
-  await refreshList();
-
-  $('#iv-add').onclick = async () => {
-    const email = $('#iv-email').value.trim().toLowerCase();
-    const role  = $('#iv-role').value;
-    if (!email) return toast('Enter an email', 'error');
-    const { error } = await sb.from('invites').upsert({ email, role, invited_by: state.user.id });
-    if (error) return toast(error.message, 'error');
-    $('#iv-email').value = '';
-    toast(`Invited ${email} as ${role}`, 'success');
-    refreshList();
-  };
+function genTempPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  let s = ''; const a = new Uint8Array(12);
+  crypto.getRandomValues(a);
+  for (let i = 0; i < a.length; i++) s += chars[a[i] % chars.length];
+  return s;
 }
 
 function renderUserChip() {
@@ -346,7 +409,7 @@ function applyRoleUI() {
 
   // Show admin-only menu items
   $('#manage-users-btn').hidden = !isAdmin;
-  $('#invites-btn').hidden = !isAdmin;
+  $('#add-user-btn').hidden = !isAdmin;
 
   // Disable write actions for viewers
   $('#new-doc-btn').style.display = canWrite ? '' : 'none';
@@ -822,8 +885,8 @@ const COMMANDS = [
   { id: 'import',      kind: 'cmd', label: 'Import docs (.json)',         run: triggerImport },
   { id: 'samples',     kind: 'cmd', label: 'Load sample runbooks',        run: seedSamples },
   { id: 'profile',     kind: 'cmd', label: 'Edit profile',                run: openProfile },
+  { id: 'add-user',    kind: 'cmd', label: 'Add user (admin)',            run: () => state.isAdmin ? openAddUser() : toast('Admin only', 'error') },
   { id: 'users',       kind: 'cmd', label: 'Manage users (admin)',        run: () => state.isAdmin ? openManageUsers() : toast('Admin only', 'error') },
-  { id: 'invites',     kind: 'cmd', label: 'Invite users (admin)',        run: () => state.isAdmin ? openInvites() : toast('Admin only', 'error') },
   { id: 'shortcuts',   kind: 'cmd', label: 'Show keyboard shortcuts',     run: openShortcuts },
   { id: 'print',       kind: 'cmd', label: 'Print / save as PDF',         run: () => window.print() },
   { id: 'logout',      kind: 'cmd', label: 'Sign out',                    run: signOut },
@@ -982,24 +1045,50 @@ function randomToken() {
 function openProfile() {
   const cur = state.profile || {};
   openModal({
-    title: 'Edit profile',
+    title: 'Profile & password',
     body: `
-      <div class="form-group"><label>Display name</label><input id="prof-name" type="text" value="${esc(cur.display_name || '')}" /></div>
+      <h4 style="margin:0 0 10px;font-size:11.5px;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);">Profile</h4>
       <div class="form-group"><label>Email</label><input type="email" value="${esc(state.user.email)}" disabled /></div>
+      <div class="form-group"><label>Display name</label><input id="prof-name" type="text" value="${esc(cur.display_name || '')}" /></div>
+      <button class="btn btn-primary btn-sm" id="pf-save">Save profile</button>
+      <hr style="border:none;border-top:1px solid var(--border);margin:20px 0;"/>
+      <h4 style="margin:0 0 10px;font-size:11.5px;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);">Change password</h4>
+      <div class="form-group"><label>New password</label><input id="pf-newpw" type="password" minlength="8" autocomplete="new-password" /></div>
+      <div class="form-group"><label>Confirm new password</label><input id="pf-confirm" type="password" minlength="8" autocomplete="new-password" /></div>
+      <button class="btn btn-primary btn-sm" id="pf-pwsave">Change password</button>
+      <div id="pf-msg" class="form-info" hidden style="margin-top:10px;"></div>
+      <div id="pf-err" class="form-error" hidden style="margin-top:10px;"></div>
     `,
-    footer: `<button class="btn btn-ghost btn-sm" id="pf-cancel">Cancel</button>
-             <button class="btn btn-primary btn-sm" id="pf-save">Save</button>`,
+    footer: `<button class="btn btn-ghost btn-sm" id="pf-close">Close</button>`,
+    size: 'modal-lg',
   });
-  $('#pf-cancel').onclick = closeModal;
+  $('#pf-close').onclick = closeModal;
   $('#pf-save').onclick = async () => {
     const display_name = $('#prof-name').value.trim();
     const { error } = await sb.from('profiles').update({ display_name }).eq('id', state.user.id);
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) return showInModal('pf-err', error.message);
     state.profile.display_name = display_name;
     renderUserChip();
-    toast('Profile saved', 'success');
-    closeModal();
+    showInModal('pf-msg', 'Profile saved');
   };
+  $('#pf-pwsave').onclick = async () => {
+    const nw = $('#pf-newpw').value, cf = $('#pf-confirm').value;
+    if (nw.length < 8) return showInModal('pf-err', 'Use at least 8 characters.');
+    if (nw !== cf)     return showInModal('pf-err', 'Passwords do not match.');
+    const { error } = await sb.auth.updateUser({ password: nw });
+    if (error) return showInModal('pf-err', error.message);
+    await sb.from('profiles').update({ must_change_password: false }).eq('id', state.user.id);
+    showInModal('pf-msg', 'Password updated');
+    $('#pf-newpw').value = ''; $('#pf-confirm').value = '';
+  };
+}
+
+function showInModal(id, msg) {
+  const ok = id === 'pf-msg';
+  $('#pf-err').hidden = ok;
+  $('#pf-msg').hidden = !ok;
+  $('#' + id).textContent = msg;
+  $('#' + id).hidden = false;
 }
 
 function openShortcuts() {
@@ -1198,13 +1287,11 @@ async function maybeRenderSharedView() {
 
 function bindEvents() {
   // Auth
-  $$('.auth-tab').forEach(b => b.addEventListener('click', () => setAuthTab(b.dataset.tab)));
   $('#auth-form').addEventListener('submit', handleAuthSubmit);
-  $('#forgot-password').addEventListener('click', handleForgotPassword);
 
-  // Pending screen
-  $('#pending-refresh').addEventListener('click', refreshPendingStatus);
-  $('#pending-signout').addEventListener('click', signOut);
+  // Forced password change
+  $('#pwchange-form').addEventListener('submit', handlePasswordChange);
+  $('#pwchange-signout').addEventListener('click', signOut);
 
   // Top bar
   $('#toggle-sidebar').addEventListener('click', toggleSidebar);
@@ -1231,7 +1318,7 @@ function bindEvents() {
     else if (act === 'profile') openProfile();
     else if (act === 'shortcuts') openShortcuts();
     else if (act === 'users')   openManageUsers();
-    else if (act === 'invites') openInvites();
+    else if (act === 'add-user') openAddUser();
   });
 
   // Sidebar sort
@@ -1389,7 +1476,6 @@ function bindEvents() {
 
 applyTheme(localStorage.getItem('kb.theme') || 'light');
 bindEvents();
-setAuthTab('signin');
 if (isMobile()) $('#sidebar').classList.add('collapsed');
 
 (async () => {

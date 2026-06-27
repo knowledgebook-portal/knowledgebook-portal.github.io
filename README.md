@@ -1,179 +1,235 @@
 # KnowledgeBox
 
-A fast, beautiful, searchable knowledge base. Markdown docs, instant search with highlights, real-time sync across all your devices, version history, public share links, and a command palette. Free to host. Real accounts via email+password (or magic link).
+A fast, beautiful, **admin-managed** knowledge base. Markdown docs, instant search with highlights, real-time sync, version history, share links, command palette. Free to host. Only admins create accounts — no public signup.
 
 ## Features
 
-- **Real accounts**: email/password, magic-link sign-in, password reset
-- **Multi-device sync**: edit on phone, see it instantly on laptop (Supabase realtime)
-- **Markdown editor** with formatting toolbar, live preview, autosave
-- **Literal full-text search** across every doc — type it, find it, highlights jump on click
-- **Version history** — every save is a rollback point
-- **Public share links** — turn any doc into a read-only URL anyone can open
-- **Command palette** (Ctrl+Shift+P) — jump to any doc or command
-- **Tags + pinning + sorting + filtering**
-- **Dark mode** (Ctrl+Shift+L)
-- **JSON export/import** for full backups
-- **PWA-ready** print stylesheet for runbooks → PDF
-- **Per-user data isolation** via Postgres row-level security — no one can see anyone else's docs
+- **Admin-only user creation** — no self-signup, no spam, no surprises
+- **Forced password change on first sign-in** — initial passwords are temporary
+- **3 roles** — admin (everything), editor (read + write), viewer (read-only)
+- **Multi-device realtime sync** — edit on phone, see it on laptop instantly
+- **Literal full-text search** across every doc with highlights and match navigation
+- **Version history** — every save snapshots prior state
+- **Public share links** — toggle a doc to a read-only URL
+- **Command palette** (`Ctrl+Shift+P`)
+- **Tags, pinning, sorting, dark mode, JSON export/import**
+- **Mobile-first** — drawer sidebar, big touch targets, safe-area aware
 
 ## Stack
 
-- **Frontend**: plain HTML/CSS/JS (ES modules) — no build step
-- **Backend**: Supabase (Postgres + Auth + Realtime)
-- **Libraries (CDN)**: `marked` (markdown), `DOMPurify` (sanitize), `@supabase/supabase-js`
+- **Frontend:** plain HTML/CSS/JS (ES modules) — no build step
+- **Backend:** Supabase (Postgres + Auth + Realtime + Edge Functions)
+- **No CLI required** — everything via Supabase Dashboard web UI
 
-## One-time setup (~5 minutes)
+## Files
 
-### 1. Create a free Supabase project
+| File | What |
+|---|---|
+| `index.html` | App shell |
+| `style.css` | Styling, light + dark, mobile-first |
+| `app.js` | All app logic |
+| `config.js` | Your Supabase project URL + publishable key |
+| `supabase-schema.sql` | Database schema (run once) |
+| `supabase-edge-function.ts` | Server function for admin user ops (deploy once) |
 
-1. Go to **https://app.supabase.com** → sign up (use GitHub or Google to skip the email step).
-2. **New project**. Pick any name, set a strong DB password (you won't need it), pick the region closest to you.
-3. Wait ~1 minute for it to provision.
+---
 
-### 2. Run the SQL schema
+## One-time setup (~5 minutes, no terminal)
 
-1. In your project, open **SQL Editor** (left sidebar) → **New query**.
-2. Open `supabase-schema.sql` from this folder → copy all of it → paste into the SQL Editor.
-3. Click **Run** (or `Ctrl+Enter`). You should see "Success. No rows returned."
+### Step 1 — Create a free Supabase project
 
-This creates the `docs`, `doc_versions`, and `profiles` tables with Row-Level Security policies that keep every user's data private.
+1. https://app.supabase.com → **Sign up** (use GitHub/Google to skip email setup)
+2. **New project** → name it `knowledgebook` → pick a strong DB password (save it) → region closest to you → **Create**
+3. Wait ~1 minute for provisioning
 
-### 3. Wire the app to your project
+### Step 2 — Run the database schema
 
-1. In Supabase: **Settings** (left sidebar) → **API**.
-2. Copy these two values:
-   - **Project URL** (looks like `https://abcdefg.supabase.co`)
-   - **anon public** API key (long string starting with `eyJ…`)
-3. Open `config.js` in this folder. Paste the two values:
+1. Left sidebar → **SQL Editor** → **New query**
+2. Open `supabase-schema.sql` from this folder → copy ALL of it → paste
+3. Click **Run** → wait for **"Success. No rows returned."**
+
+This creates the `profiles`, `docs`, `doc_versions` tables with row-level security.
+
+> ⚠️ This SQL is a CLEAN SLATE. It drops existing tables. If you already had data, export first.
+
+### Step 3 — Turn OFF public signup
+
+1. Left sidebar → **Authentication** → **Sign In / Up** (or "Providers")
+2. Find **Email** provider → click it
+3. **Allow new users to sign up** → **OFF** → **Save**
+
+This is the lockdown — only the Edge Function (which checks for admin) can create users.
+
+### Step 4 — Deploy the Edge Function (admin user operations)
+
+1. Left sidebar → **Edge Functions**
+2. **Deploy a new function**
+3. **Name:** `admin-users` (this exact name, no typos)
+4. Open `supabase-edge-function.ts` from this folder → copy ALL of it → paste into the function code editor
+5. Click **Deploy function**
+
+The `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_ANON_KEY` env vars are auto-injected — no extra setup.
+
+> If your Supabase dashboard doesn't let you create Edge Functions in the browser (some regions / older accounts require the CLI), see the "CLI fallback" at the bottom of this README.
+
+### Step 5 — Wire the app to your project
+
+1. Supabase → **Settings → API**
+2. Copy:
+   - **Project URL** (`https://xxxxxx.supabase.co`)
+   - **anon / publishable key** (`sb_publishable_…` or `eyJ…`)
+3. Open `config.js` in this folder. Paste both values:
    ```javascript
-   export const SUPABASE_URL  = 'https://abcdefg.supabase.co';
-   export const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR…';
+   export const SUPABASE_URL  = 'https://xxxxxx.supabase.co';
+   export const SUPABASE_ANON = 'sb_publishable_xxx_xxx...';
    ```
 4. Save.
 
-> **These two values are safe to commit publicly.** The anon key only allows operations permitted by the RLS policies you just ran. Every user has to log in with a real account; the database enforces who sees what.
+### Step 6 — Create your admin account (manual, one-time)
 
-### 4. Run the app
+Since public signup is off, your own account has to be created from the Supabase Auth dashboard:
 
-Just open `index.html` in any modern browser. No server needed.
+1. Left sidebar → **Authentication** → **Users** → **Add user → Create new user**
+2. Fill:
+   - **Email:** your email
+   - **Password:** any password (you'll change it on first login)
+   - **Auto Confirm User:** ✅ on
+3. Click **Create**.
 
-For sharing with friends or using from your phone, host the static files on **Netlify** (free) or **Vercel** (free) — see "Deploy" below.
+Now promote yourself to admin via SQL:
 
-### 5. Create your first (admin) account
+1. **SQL Editor** → **New query**:
+   ```sql
+   update public.profiles
+   set role = 'admin', status = 'active', must_change_password = true
+   where email = 'YOUR-EMAIL';
+   ```
+2. **Run**.
 
-1. Open the app → click **Create account** tab.
-2. Enter email + password + display name → **Create account**.
-3. Check your inbox for a confirmation link (Supabase sends it). Click it.
-4. Come back → **Sign in** → you'll see a **"Waiting for approval"** screen. This is expected.
+> Note: if the profiles row doesn't exist yet (because the user was just created and no trigger inserted it), insert it manually:
+> ```sql
+> insert into public.profiles (id, email, display_name, role, status, must_change_password)
+> select id, email, split_part(email,'@',1), 'admin', 'active', true
+> from auth.users where email = 'YOUR-EMAIL'
+> on conflict (id) do update set role='admin', status='active';
+> ```
 
-### 6. Promote yourself to admin (one-time, ~30 seconds)
+### Step 7 — Sign in
 
-In Supabase → **SQL Editor** → run this (replacing your email):
+1. Open `index.html` (or serve with `python -m http.server 8000` and visit http://localhost:8000)
+2. Enter your email + password
+3. App forces you to set a new password (one you actually want)
+4. You land in the app as admin
 
-```sql
-update public.profiles
-set role = 'admin', status = 'active'
-where email = 'your-email@example.com';
-```
+---
 
-Back in the app → click **Check again** on the pending screen. You're in as admin.
+## Adding users (the admin workflow)
+
+### From inside the app (the only way)
+
+1. Sign in as admin
+2. Click your name (top-right) → **+ Add user · admin**
+3. Fill in:
+   - Email
+   - Display name (optional)
+   - Initial password (auto-generated; click ↻ to regenerate)
+   - Role (admin / editor / viewer)
+4. Click **Create user**
+5. App shows the credentials in a modal — click **Copy**, share with the user securely (Signal, in-person, password manager, etc.)
+6. User signs in with those credentials → app forces them to change password before letting them in
+
+That's it. No emails sent, no confirmation links, no waiting.
+
+## Managing existing users
+
+User menu → **Manage users · admin**:
+
+| Button | What it does |
+|---|---|
+| **Save** | Persist new role/status for that row |
+| **Reset pw** | Issue a new temporary password (forces change on next sign-in) |
+| **Delete** | Permanently remove user + all their docs |
+
+You cannot delete yourself or change your own role from here.
 
 ## Roles & permissions
 
-| Role | Can do |
-|---|---|
-| **admin** | Everything: create / edit / delete *any* doc, manage users (approve / disable / change roles), invite new users |
-| **editor** | Create / edit / delete their own docs, view all team docs |
-| **viewer** | Read-only — see all team docs, can't create or edit |
+| Action | Admin | Editor | Viewer |
+|---|---|---|---|
+| Read any doc | ✅ | ✅ | ✅ |
+| Create docs | ✅ | ✅ | ❌ |
+| Edit / delete own docs | ✅ | ✅ | ❌ |
+| Edit / delete any doc | ✅ | ❌ | ❌ |
+| Share publicly | ✅ | ✅ | ❌ |
+| Manage users | ✅ | ❌ | ❌ |
+| Add new users | ✅ | ❌ | ❌ |
 
-All members of your team share the same knowledge base. Privacy is per-team, not per-user — everyone with an active account can read all docs (which is usually what you want for a shared runbook collection). A doc's *author* can edit it; admins can edit any doc.
-
-## Adding users — two ways
-
-### Option A — Invite by email (auto-approves)
-
-As admin: user menu → **Invite new users** → enter their email + role → **Add invite**. When they sign up with that email, they're activated automatically with the role you set.
-
-### Option B — Manual approval
-
-User signs up with any email → they see the "Waiting for approval" screen → as admin you go to **Manage users** → flip their status to **active** + pick a role → **Save**. They click **Check again** on their pending screen and they're in.
-
-## Locking someone out
-
-Admin → **Manage users** → set their status to **disabled**. Their account survives but they can't sign in. Re-enable any time.
+Privacy is per-team — every active user reads everyone's docs (this is a shared knowledge base). The UI hides write controls from viewers, and the database also rejects the writes (defense in depth).
 
 ## Daily use
 
 | Action | How |
 |---|---|
-| Create doc | `Ctrl+N` or the **+ New** button |
-| Save | `Ctrl+S` (or just stop typing — autosave kicks in after 1.5s) |
-| Search every doc | `Ctrl+K`, then type — results appear instantly with highlights |
-| Open a result | Click it; the doc opens with every match highlighted; `Enter` jumps to next |
-| Edit doc | `Ctrl+E` toggles edit / view |
-| Pin a doc | Pin icon in toolbar — goes to top of sidebar |
-| Share publicly | Share icon → toggle on → copy the read-only link |
+| New doc | `Ctrl+N` or **+ New** |
+| Save | `Ctrl+S` (autosaves after 1.5s of idle) |
+| Search | `Ctrl+K`, then type — instant literal matches with highlights |
+| Open result | Click — opens doc with every match highlighted; `Enter` jumps to next |
+| Edit/View | `Ctrl+E` |
+| Pin | Pin icon in toolbar |
+| Share | Share icon → toggle on → Copy link |
 | Restore old version | History icon → pick → Restore |
-| Command palette | `Ctrl+Shift+P` — jump to any doc or run any action |
+| Command palette | `Ctrl+Shift+P` |
 | Toggle theme | `Ctrl+Shift+L` |
-| Print / PDF | Print icon or `Ctrl+P` — clean print layout |
+| Print / PDF | Print icon or `Ctrl+P` |
 
-## Deploy (so you can use it from your phone too)
+## Deploy (so the team can use it from anywhere)
 
-Pick one — both are free, both take 2 minutes:
+### Netlify
 
-### Netlify (recommended for simplicity)
-
-1. https://app.netlify.com/start
-2. Sign in with GitHub.
-3. Drag-and-drop this folder OR connect a GitHub repo.
-4. Done. You get a URL like `https://your-name.netlify.app`.
+1. https://app.netlify.com/start → **Import from GitHub** → pick your repo
+2. Build command: leave blank. Publish directory: leave blank
+3. Deploy. URL like `https://yourname.netlify.app`
+4. In Supabase → **Authentication → URL Configuration** → add the deployed URL to **Site URL** and **Redirect URLs**
 
 ### Vercel
 
-1. https://vercel.com/new
-2. Import this folder (no build settings needed — it's static).
-3. Deploy. URL like `https://your-name.vercel.app`.
-
-### After deploying
-
-In Supabase: **Authentication** → **URL Configuration** → add your deployed URL to **Site URL** and **Redirect URLs** so password-reset / magic-link emails point users back to your live app.
-
-## Adding more users
-
-Anyone you want to give access to just signs up themselves on your deployed URL. They get their own account, their own docs, their own login.
-
-You **don't share** anything. Each user has private isolation enforced by Postgres RLS. If you want to share a *specific doc* with someone outside the app, use the **Share** button to generate a public read-only link.
+1. https://vercel.com/new → import the repo
+2. Deploy (no build settings needed)
 
 ## Free tier limits (you won't hit these)
 
-| Resource | Free tier | What it means for you |
-|---|---|---|
-| Supabase DB | 500 MB | ~50,000 average-sized runbooks |
-| Supabase MAU | 50,000 | active monthly users |
-| Supabase API calls | unlimited | |
-| Netlify bandwidth | 100 GB / mo | ~500,000 page loads |
-| Netlify build minutes | 300 / mo | no build needed anyway |
+| Resource | Free tier |
+|---|---|
+| Supabase DB | 500 MB |
+| Supabase MAU | 50,000 |
+| Supabase API requests | unlimited |
+| Supabase Edge Function invocations | 500,000 / month |
+| Netlify bandwidth | 100 GB / month |
 
-> Supabase free projects pause after **7 days of inactivity**. Unpause in one click — no data loss. If you use this daily, you'll never see it.
+> Supabase free projects pause after 7 days of inactivity. Click "unpause" — no data loss.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| "One-time setup needed" screen | Fill in `config.js` with your URL + anon key |
-| Sign-in fails | Confirm you clicked the confirmation email |
-| Magic link doesn't work after deploy | In Supabase → Authentication → URL Configuration → add your deployed URL |
-| Realtime pill stuck on "Connecting" | Check that Realtime is enabled in Supabase (it is by default) |
-| Forgot password | Click "Forgot password?" on the sign-in screen |
+| "One-time setup needed" screen | Fill in `config.js` with your URL + key |
+| Sign in works but "must change password" loops | After changing, check Supabase: `select must_change_password from public.profiles` — should be `false` after change |
+| Add user fails with "Admin only" | Your profile.role must be `admin` AND status `active`. Run the SQL from Step 6. |
+| Add user fails with "Function not found" | Edge Function name must be exactly `admin-users` |
+| Add user fails with CORS | Edge Function code must include the CORS headers from `supabase-edge-function.ts` |
+| Realtime stuck on "Connecting" | Check Supabase Auth → Realtime is enabled (on by default) |
 
-## Files
+## CLI fallback for Edge Function (only if dashboard doesn't allow inline editing)
 
-- `index.html` — app shell
-- `style.css` — all styling (light + dark)
-- `app.js` — all logic (auth, CRUD, search, editor, realtime, palette)
-- `config.js` — your Supabase URL + anon key (you fill in)
-- `supabase-schema.sql` — database setup (run once)
+If your Supabase dashboard requires the CLI for functions:
 
-Built as a single static page that talks directly to Supabase via the JS client. No build step, no backend code, no servers to maintain.
+```bash
+npm install -g supabase
+supabase login
+supabase link --project-ref <your-project-ref>
+mkdir -p supabase/functions/admin-users
+cp supabase-edge-function.ts supabase/functions/admin-users/index.ts
+supabase functions deploy admin-users --no-verify-jwt
+```
+
+(`--no-verify-jwt` is required because we verify the JWT manually inside the function.)
