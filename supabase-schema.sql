@@ -1,6 +1,16 @@
 -- ============================================================================
 --  KnowledgeBox — Supabase schema (v3: admin-only, no self-signup)
---  WARNING: This is a CLEAN SLATE schema. It drops existing tables.
+--
+--  ⚠️ DANGER: this is the CLEAN-SLATE installer. It DROPS all existing data
+--  (docs, doc_versions, profiles) before recreating the schema.
+--
+--  Use this ONLY for:
+--    1. First-time setup on a fresh Supabase project, OR
+--    2. After downloading a backup and wanting to wipe + restore
+--
+--  To ADD the storage-stats + backup helper functions to an EXISTING database
+--  WITHOUT losing data, run `supabase-schema-update.sql` instead.
+--
 --  Run in: SQL Editor -> New query -> paste -> Run
 -- ============================================================================
 
@@ -177,6 +187,76 @@ create policy "versions_select_active" on public.doc_versions
 
 create policy "versions_insert_writers" on public.doc_versions
   for insert with check (public.can_write());
+
+-- ---------------------------------------------------------------------------
+-- Helper: db stats (used by db-stats Edge Function for the storage indicator)
+-- ---------------------------------------------------------------------------
+create or replace function public.kb_db_stats()
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_total bigint;
+  v_tables jsonb;
+begin
+  -- Only admins can call this
+  if not public.is_admin() then
+    raise exception 'admin only';
+  end if;
+
+  select pg_database_size(current_database()) into v_total;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'name',  t.table_name,
+    'rows',  c.reltuples::bigint,
+    'bytes', pg_total_relation_size(format('public.%I', t.table_name)::regclass),
+    'pretty_size', pg_size_pretty(pg_total_relation_size(format('public.%I', t.table_name)::regclass))
+  ) order by pg_total_relation_size(format('public.%I', t.table_name)::regclass) desc), '[]'::jsonb)
+  into v_tables
+  from information_schema.tables t
+  join pg_class c on c.relname = t.table_name
+  where t.table_schema = 'public'
+    and t.table_type = 'BASE TABLE';
+
+  return jsonb_build_object(
+    'total_bytes', v_total,
+    'tables', v_tables
+  );
+end $$;
+
+revoke all on function public.kb_db_stats() from public;
+grant execute on function public.kb_db_stats() to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Helper: full data backup (used by db-backup Edge Function)
+-- Returns every row from every public table as a single JSON blob.
+-- ---------------------------------------------------------------------------
+create or replace function public.kb_db_backup()
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_out  jsonb := '{}'::jsonb;
+  v_docs jsonb;
+  v_vers jsonb;
+  v_prof jsonb;
+begin
+  if not public.is_admin() then
+    raise exception 'admin only';
+  end if;
+
+  select coalesce(jsonb_agg(to_jsonb(d) order by d.created_at), '[]'::jsonb) into v_docs from public.docs d;
+  select coalesce(jsonb_agg(to_jsonb(v) order by v.saved_at),  '[]'::jsonb) into v_vers from public.doc_versions v;
+  select coalesce(jsonb_agg(to_jsonb(p) order by p.created_at),'[]'::jsonb) into v_prof from public.profiles p;
+
+  return jsonb_build_object(
+    'exported_at',  now(),
+    'app',          'knowledgebox',
+    'schema_version', 'v3',
+    'docs',         v_docs,
+    'doc_versions', v_vers,
+    'profiles',     v_prof
+  );
+end $$;
+
+revoke all on function public.kb_db_backup() from public;
+grant execute on function public.kb_db_backup() to authenticated;
 
 -- ===========================================================================
 -- DISABLE SUPABASE'S BUILT-IN SIGNUP

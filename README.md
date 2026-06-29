@@ -29,8 +29,12 @@ A fast, beautiful, **admin-managed** knowledge base. Markdown docs, instant sear
 | `style.css` | Styling, light + dark, mobile-first |
 | `app.js` | All app logic |
 | `config.js` | Your Supabase project URL + publishable key |
-| `supabase-schema.sql` | Database schema (run once) |
-| `supabase-edge-function.ts` | Server function for admin user ops (deploy once) |
+| `supabase-schema.sql` | Database schema (⚠️ drops + recreates — first-time setup only) |
+| `supabase-schema-update.sql` | Idempotent helper-function update (safe to re-run, preserves data) |
+| `edge-functions/admin-users.ts` | Server function for user create/reset/delete (deploy once) |
+| `edge-functions/db-stats.ts` | Server function for storage usage indicator (deploy once) |
+| `edge-functions/db-backup.ts` | Server function for full data backup download (deploy once) |
+| `LOCAL-SETUP.md` | Step-by-step guide to move off hosted Supabase to local |
 
 ---
 
@@ -60,15 +64,23 @@ This creates the `profiles`, `docs`, `doc_versions` tables with row-level securi
 
 This is the lockdown — only the Edge Function (which checks for admin) can create users.
 
-### Step 4 — Deploy the Edge Function (admin user operations)
+### Step 4 — Deploy the Edge Functions (3 total)
 
-1. Left sidebar → **Edge Functions**
-2. **Deploy a new function**
-3. **Name:** `admin-users` (this exact name, no typos)
-4. Open `supabase-edge-function.ts` from this folder → copy ALL of it → paste into the function code editor
-5. Click **Deploy function**
+For each function below, do this in Supabase:
 
-The `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_ANON_KEY` env vars are auto-injected — no extra setup.
+1. Left sidebar → **Edge Functions** → **Deploy a new function**
+2. **Verify JWT:** UNCHECK (the functions verify the JWT manually with admin checks)
+3. **Name** + paste code from the matching file, then **Deploy function**:
+
+| Function name | File to paste |
+|---|---|
+| `admin-users` | `edge-functions/admin-users.ts` |
+| `db-stats`    | `edge-functions/db-stats.ts` |
+| `db-backup`   | `edge-functions/db-backup.ts` |
+
+`admin-users` powers user create/reset/delete. `db-stats` powers the storage usage indicator. `db-backup` powers the one-click full backup.
+
+The `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_ANON_KEY` env vars are auto-injected for all of them — no extra setup.
 
 > If your Supabase dashboard doesn't let you create Edge Functions in the browser (some regions / older accounts require the CLI), see the "CLI fallback" at the bottom of this README.
 
@@ -151,6 +163,21 @@ User menu → **Manage users · admin**:
 | **Delete** | Permanently remove user + all their docs |
 
 You cannot delete yourself or change your own role from here.
+
+## Database & backup (admin)
+
+The admin user menu has a **Database & backup** entry that opens a panel showing:
+
+- **Current storage usage** out of the 500 MB free tier, broken down per table
+- **One-click full backup download** — JSON file with every row + schema SQL + RESTORE.md
+- Quick restore-path summary inside the modal
+
+A small progress bar in the **user dropdown header** also gives ambient awareness — turns amber at 70%, red at 90%.
+
+When the free tier is getting full, see `LOCAL-SETUP.md` for moving to your own infrastructure:
+
+- **Path A** — self-hosted Supabase via Docker (app works unchanged)
+- **Path B** — plain Postgres (local or Azure) for cold backups + analytics
 
 ## Roles & permissions
 
