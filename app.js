@@ -42,6 +42,10 @@ const ICON_FOLDER = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none"
 const ICON_FOLDER_OPEN = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2"/><path d="M3 9h17.5a1 1 0 0 1 .96 1.27l-1.9 7A2 2 0 0 1 17.62 19H5a2 2 0 0 1-2-2z"/></svg>`;
 const ICON_DOC = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>`;
 const ICON_ALL_DOCS = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2h8a2 2 0 0 1 2 2v3"/><path d="M5 5h11a2 2 0 0 1 2 2v3"/><path d="M2 8h11a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z"/></svg>`;
+const ICON_IMAGE = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>`;
+const ICON_PDF = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><text x="7" y="18" font-size="6" font-weight="bold" stroke="none" fill="currentColor">PDF</text></svg>`;
+const ICON_CODE = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`;
+const ICON_DOTS = `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>`;
 
 /* ---------- App state ---------- */
 const state = {
@@ -213,14 +217,24 @@ async function loadStorageStats() {
   try {
     const s = await callEdge('kb_db_stats');
     state.storageStats = s;
-    const used = s.total_bytes || 0;
-    const limit = s.free_tier_bytes || 524_288_000;
-    const pct = Math.min(100, Math.round((used / limit) * 100));
-    $('#storage-pill-value').textContent = `${fmtBytes(used)} / ${fmtBytes(limit)}`;
-    $('#storage-pill-fill').style.width = pct + '%';
+
+    const dbUsed  = s.total_bytes || 0;
+    const dbLimit = s.free_tier_bytes || 524_288_000;
+    const dbPct   = Math.min(100, Math.round((dbUsed / dbLimit) * 100));
+
+    const bUsed  = s.storage?.used_bytes || 0;
+    const bLimit = s.storage?.free_tier_bytes || 1_073_741_824;
+    const bPct   = Math.min(100, Math.round((bUsed / bLimit) * 100));
+
+    const worstPct = Math.max(dbPct, bPct);
+
+    $('#storage-pill-value').innerHTML =
+      `<span title="Database (500 MB free)">DB ${fmtBytes(dbUsed)}</span> · ` +
+      `<span title="Storage bucket (1 GB free)">Files ${fmtBytes(bUsed)}</span>`;
+    $('#storage-pill-fill').style.width = worstPct + '%';
     pill.classList.remove('warn', 'danger');
-    if (pct >= 90) pill.classList.add('danger');
-    else if (pct >= 70) pill.classList.add('warn');
+    if (worstPct >= 90) pill.classList.add('danger');
+    else if (worstPct >= 70) pill.classList.add('warn');
   } catch (e) {
     $('#storage-pill-value').textContent = 'stats unavailable';
     console.warn('db-stats failed:', e.message);
@@ -232,34 +246,61 @@ async function openBackupModal() {
   if (!state.isAdmin) { toast('Admin only', 'error'); return; }
 
   const s = state.storageStats;
-  const used = s?.total_bytes || 0;
-  const limit = s?.free_tier_bytes || 524_288_000;
-  const pct = Math.min(100, Math.round((used / limit) * 100));
+  const dbUsed  = s?.total_bytes || 0;
+  const dbLimit = s?.free_tier_bytes || 524_288_000;
+  const dbPct   = Math.min(100, Math.round((dbUsed / dbLimit) * 100));
+  const bUsed   = s?.storage?.used_bytes || 0;
+  const bLimit  = s?.storage?.free_tier_bytes || 1_073_741_824;
+  const bPct    = Math.min(100, Math.round((bUsed / bLimit) * 100));
+  const bFiles  = s?.storage?.file_count || 0;
   const tablesHtml = (s?.tables || []).slice(0, 10).map(t => `
     <tr><td>${esc(t.name)}</td><td style="text-align:right;color:var(--text-muted);">${esc(t.pretty_size || fmtBytes(t.bytes))}</td><td style="text-align:right;color:var(--text-muted);">${(t.rows ?? 0).toLocaleString()} rows</td></tr>`).join('');
+
+  const bar = (pct) => pct >= 90 ? 'linear-gradient(90deg,var(--danger),#ff7676)'
+                    : pct >= 70 ? 'linear-gradient(90deg,var(--warning),#ffb84a)'
+                                : 'linear-gradient(90deg,var(--success),#3ec48a)';
 
   openModal({
     title: 'Database & backup',
     size: 'modal-lg',
     body: `
       <h4 style="margin:0 0 10px;font-size:11.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);">Storage usage</h4>
-      <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px;">
+
+      <!-- Database -->
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
-          <span style="font-size:13px;font-weight:500;">${fmtBytes(used)} used</span>
-          <span style="font-size:12px;color:var(--text-muted);">of ${fmtBytes(limit)} (${pct}%)</span>
+          <span style="font-size:13px;font-weight:600;">🗄️  Database</span>
+          <span style="font-size:12px;color:var(--text-muted);"><b style="color:var(--text);">${fmtBytes(dbUsed)}</b> / ${fmtBytes(dbLimit)} <span style="color:var(--text-faint);">(${dbPct}%)</span></span>
         </div>
         <div style="height:8px;background:var(--bg-soft);border-radius:999px;overflow:hidden;">
-          <div style="height:100%;width:${pct}%;background:${pct >= 90 ? 'linear-gradient(90deg,var(--danger),#ff7676)' : pct >= 70 ? 'linear-gradient(90deg,var(--warning),#ffb84a)' : 'linear-gradient(90deg,var(--success),#3ec48a)'};border-radius:999px;"></div>
+          <div style="height:100%;width:${dbPct}%;background:${bar(dbPct)};border-radius:999px;"></div>
         </div>
-        ${tablesHtml ? `<table style="width:100%;margin-top:14px;font-size:12.5px;">
+        <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Markdown docs, profiles, version history, folders.</div>
+      </div>
+
+      <!-- Storage bucket -->
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
+          <span style="font-size:13px;font-weight:600;">📦  Files bucket</span>
+          <span style="font-size:12px;color:var(--text-muted);"><b style="color:var(--text);">${fmtBytes(bUsed)}</b> / ${fmtBytes(bLimit)} <span style="color:var(--text-faint);">(${bPct}%)</span></span>
+        </div>
+        <div style="height:8px;background:var(--bg-soft);border-radius:999px;overflow:hidden;">
+          <div style="height:100%;width:${bPct}%;background:${bar(bPct)};border-radius:999px;"></div>
+        </div>
+        <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Images, PDFs, binary uploads · ${bFiles.toLocaleString()} file${bFiles === 1 ? '' : 's'}.</div>
+      </div>
+
+      <details style="margin-bottom:14px;">
+        <summary style="cursor:pointer;font-size:12px;color:var(--text-soft);padding:4px 0;">▸ Database tables breakdown</summary>
+        ${tablesHtml ? `<table style="width:100%;margin-top:10px;font-size:12.5px;">
           <thead><tr>
             <th style="text-align:left;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);padding-bottom:6px;">Table</th>
             <th style="text-align:right;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);padding-bottom:6px;">Size</th>
             <th style="text-align:right;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);padding-bottom:6px;">Rows</th>
           </tr></thead>
           <tbody>${tablesHtml}</tbody>
-        </table>` : ''}
-      </div>
+        </table>` : '<p style="color:var(--text-muted);font-size:12px;">No data yet.</p>'}
+      </details>
 
       <h4 style="margin:0 0 10px;font-size:11.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);">Download backup</h4>
       <p style="font-size:13px;color:var(--text-soft);margin:0 0 12px;">One-click full export — all docs, profiles, and version history bundled into a ZIP with restore steps included.</p>
@@ -618,6 +659,7 @@ function applyRoleUI() {
 
   // Disable write actions for viewers
   $('#new-doc-btn').style.display = canWrite ? '' : 'none';
+  $('#upload-btn').hidden = !canWrite;
   $('#welcome-new').style.display = canWrite ? '' : 'none';
   $('#welcome-sample').style.display = canWrite ? '' : 'none';
   $('#import-btn').style.display = canWrite ? '' : 'none';
@@ -753,9 +795,7 @@ function renderFolderTree() {
       ${docCount ? `<span class="folder-row-count">${docCount}</span>` : ''}
       ${state.canWrite ? `
       <span class="folder-row-actions">
-        <button data-act="add"    title="New subfolder">+</button>
-        <button data-act="rename" title="Rename">✎</button>
-        <button data-act="delete" title="Delete">×</button>
+        <button class="folder-row-menu-btn" data-act="menu" title="Menu">${ICON_DOTS}</button>
       </span>` : ''}
     `;
     row.querySelector('.folder-row-twist').addEventListener('click', (e) => {
@@ -771,10 +811,7 @@ function renderFolderTree() {
     row.querySelectorAll('.folder-row-actions button').forEach(b => {
       b.addEventListener('click', (e) => {
         e.stopPropagation();
-        const act = b.dataset.act;
-        if (act === 'add') promptNewFolder(id);
-        else if (act === 'rename') promptRename(node);
-        else if (act === 'delete') deleteFolder(id);
+        openFolderMenu(b, node);
       });
     });
     attachDropTarget(row, id);
@@ -820,8 +857,25 @@ function attachDropTarget(el, folderId) {
   el.addEventListener('drop', async (e) => {
     e.preventDefault();
     el.classList.remove('drag-over');
+    // 1. internal doc move
     const docId = e.dataTransfer.getData('text/x-kb-docid');
-    if (docId) await moveDocToFolder(docId, folderId);
+    if (docId) { await moveDocToFolder(docId, folderId); return; }
+    // 2. external drop — detect folders via webkitGetAsEntry
+    const dt = e.dataTransfer;
+    const items = dt.items ? Array.from(dt.items) : [];
+    const hasDir = items.some(it => {
+      const entry = it.webkitGetAsEntry?.();
+      return entry && entry.isDirectory;
+    });
+    if (hasDir) {
+      const flat = await walkDataTransferItems(items);
+      if (flat.length) await handleFolderUpload(flat, folderId);
+      return;
+    }
+    // 3. plain file drop -> flat upload
+    if (dt.files && dt.files.length) {
+      await handleFileUpload(dt.files, folderId);
+    }
   });
 }
 
@@ -834,6 +888,43 @@ function promptRename(node) {
   const name = prompt('Rename folder:', node.name);
   if (!name?.trim() || name === node.name) return;
   renameFolder(node.id, name.trim());
+}
+
+let _folderMenuEl = null;
+function closeFolderMenu() {
+  if (_folderMenuEl) { _folderMenuEl.remove(); _folderMenuEl = null; }
+  document.removeEventListener('click', closeFolderMenu);
+}
+function openFolderMenu(anchorBtn, node) {
+  closeFolderMenu();
+  const menu = document.createElement('div');
+  menu.className = 'folder-popmenu';
+  menu.innerHTML = `
+    <button data-act="upload">⤓ Upload files…</button>
+    <button data-act="upload-folder">⤓ Upload folder…</button>
+    <button data-act="new-doc">＋ New doc here</button>
+    <button data-act="add">＋ New subfolder</button>
+    <button data-act="rename">✎ Rename</button>
+    <hr/>
+    <button data-act="delete" class="danger">× Delete folder</button>
+  `;
+  document.body.appendChild(menu);
+  const r = anchorBtn.getBoundingClientRect();
+  menu.style.top  = (r.bottom + 4) + 'px';
+  menu.style.left = Math.max(8, r.left - 140) + 'px';
+  menu.addEventListener('click', (e) => {
+    const a = e.target.closest('button')?.dataset.act;
+    if (!a) return;
+    closeFolderMenu();
+    if (a === 'upload')   openFilePicker(node.id);
+    else if (a === 'upload-folder') openFolderPicker(node.id);
+    else if (a === 'new-doc') { state.currentFolderId = node.id; state.currentDocId = null; showView('editor'); }
+    else if (a === 'add')    promptNewFolder(node.id);
+    else if (a === 'rename') promptRename(node);
+    else if (a === 'delete') deleteFolder(node.id);
+  });
+  setTimeout(() => document.addEventListener('click', closeFolderMenu), 0);
+  _folderMenuEl = menu;
 }
 
 function openMoveDocModal() {
@@ -890,8 +981,10 @@ async function updateDoc(id, patch) {
 }
 
 async function deleteDoc(id) {
+  const doc = getDoc(id);
   const { error } = await sb.from('docs').delete().eq('id', id);
   if (error) { toast('Delete failed: ' + error.message, 'error'); return false; }
+  if (doc) deleteFileObject(doc);
   state.docs = state.docs.filter(d => d.id !== id);
   if (state.currentDocId === id) {
     state.currentDocId = state.docs[0]?.id || null;
@@ -902,6 +995,409 @@ async function deleteDoc(id) {
 }
 
 function getDoc(id) { return state.docs.find(d => d.id === id); }
+
+/* ============================================================================
+   FILE UPLOAD pipeline
+   ============================================================================ */
+
+const FILE_MAX_BYTES = 10 * 1024 * 1024;          // 10 MB hard cap
+const TEXT_MAX_BYTES =  2 * 1024 * 1024;          //  2 MB cap for inline text storage
+const FOLDER_UPLOAD_MAX_FILES = 100;              // safety cap per folder upload
+const FOLDER_UPLOAD_MAX_DEPTH = 5;                // safety cap on nesting
+
+// Hidden filenames/folders (anything starting with a dot — .git, .vscode, .DS_Store, etc.)
+// plus a couple of common noise dirs that aren't dotfiles.
+const HIDDEN_DIR_NAMES = new Set(['node_modules', '__MACOSX', 'Thumbs.db']);
+function isHiddenName(name) {
+  if (!name) return false;
+  if (name.startsWith('.')) return true;
+  return HIDDEN_DIR_NAMES.has(name);
+}
+function pathHasHidden(relativePath) {
+  // "k8s/.git/HEAD" -> hidden because middle part is .git
+  return relativePath.split('/').some(isHiddenName);
+}
+
+// Map extension -> language hint for syntax highlighting + sidebar pill
+const EXT_LANG = {
+  yaml:'yaml', yml:'yaml', json:'json', toml:'toml', ini:'ini',
+  conf:'ini', env:'shell', properties:'ini', xml:'xml',
+  sh:'shell', bash:'shell', zsh:'shell', ps1:'powershell',
+  bat:'batch', cmd:'batch', fish:'shell',
+  dockerfile:'dockerfile', dockerignore:'shell',
+  tf:'hcl', hcl:'hcl', tfvars:'hcl',
+  py:'python', js:'javascript', mjs:'javascript', cjs:'javascript',
+  ts:'typescript', tsx:'tsx', jsx:'jsx',
+  go:'go', rb:'ruby', java:'java', rs:'rust',
+  c:'c', cpp:'cpp', h:'c', hpp:'cpp', cs:'csharp',
+  md:'markdown', txt:'plaintext', log:'plaintext',
+  sql:'sql', graphql:'graphql', proto:'protobuf',
+  css:'css', scss:'scss', less:'less', html:'html', vue:'html',
+  gitignore:'shell', editorconfig:'ini', npmrc:'ini',
+};
+
+function detectLanguage(filename) {
+  const lower = filename.toLowerCase();
+  if (lower === 'dockerfile' || lower.startsWith('dockerfile.')) return 'dockerfile';
+  if (lower === 'makefile') return 'makefile';
+  const ext = lower.split('.').pop();
+  return EXT_LANG[ext] || 'plaintext';
+}
+
+function fileKind(file) {
+  const mime = file.type || '';
+  if (mime.startsWith('image/')) return 'image';
+  if (mime === 'application/pdf') return 'pdf';
+  // text fallback by extension / mime
+  if (mime.startsWith('text/')) return 'text';
+  const name = file.name.toLowerCase();
+  if (name === 'dockerfile' || name === 'makefile' || name === '.gitignore' || name === '.editorconfig') return 'text';
+  const ext = name.split('.').pop();
+  if (EXT_LANG[ext]) return 'text';
+  if (mime === 'application/json') return 'text';
+  // Default: treat unknown as binary blob -> Storage
+  return 'binary';
+}
+
+function prettyBytes(n) {
+  if (!n) return '0 B';
+  const u = ['B','KB','MB','GB'];
+  let v = n, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${u[i]}`;
+}
+
+/* ----- PDF text extraction (PDF.js loaded on demand) ----- */
+let _pdfjsPromise = null;
+async function getPdfJs() {
+  if (window.pdfjsLib) return window.pdfjsLib;
+  if (_pdfjsPromise) return _pdfjsPromise;
+  _pdfjsPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs';
+    s.type = 'module';
+    s.onload = async () => {
+      try {
+        const mod = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs');
+        mod.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+        window.pdfjsLib = mod;
+        resolve(mod);
+      } catch (e) { reject(e); }
+    };
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+  return _pdfjsPromise;
+}
+
+async function extractPdfText(file) {
+  try {
+    const pdfjsLib = await getPdfJs();
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const parts = [];
+    const maxPages = Math.min(pdf.numPages, 200); // safety
+    for (let i = 1; i <= maxPages; i++) {
+      const page = await pdf.getPage(i);
+      const txt = await page.getTextContent();
+      parts.push(txt.items.map(it => it.str).join(' '));
+    }
+    return parts.join('\n\n').slice(0, 200_000); // cap to ~200 KB of extracted text
+  } catch (e) {
+    console.warn('PDF extract failed for', file.name, e);
+    return null;
+  }
+}
+
+async function readFileText(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsText(file);
+  });
+}
+
+async function uploadFileToStorage(file, kind) {
+  const ts = new Date();
+  const datePath = `${ts.getFullYear()}/${String(ts.getMonth() + 1).padStart(2, '0')}/${String(ts.getDate()).padStart(2, '0')}`;
+  const safeName = file.name.replace(/[^\w.\- ]+/g, '_').slice(0, 80);
+  const path = `${kind}s/${datePath}/${crypto.randomUUID()}-${safeName}`;
+  const { error } = await sb.storage.from('kb-files').upload(path, file, {
+    contentType: file.type || 'application/octet-stream',
+    cacheControl: '3600',
+  });
+  if (error) throw error;
+  const { data } = sb.storage.from('kb-files').getPublicUrl(path);
+  return { path, publicUrl: data.publicUrl };
+}
+
+async function uploadOneFile(file, { folderId = null } = {}) {
+  if (file.size > FILE_MAX_BYTES) throw new Error(`${file.name} is too large (>10 MB).`);
+  const kind = fileKind(file);
+
+  if (kind === 'text') {
+    if (file.size > TEXT_MAX_BYTES) throw new Error(`${file.name} too large for inline text (>2 MB).`);
+    const content = await readFileText(file);
+    const row = {
+      owner_id: state.user.id,
+      title: file.name,
+      content,
+      tags: [],
+      folder_id: folderId,
+      kind: 'file',
+      original_filename: file.name,
+      language: detectLanguage(file.name),
+      mime_type: file.type || 'text/plain',
+      size_bytes: file.size,
+    };
+    const { data, error } = await sb.from('docs').insert(row).select().single();
+    if (error) throw error;
+    state.docs.unshift(data);
+    return data;
+  }
+
+  if (kind === 'image' || kind === 'pdf' || kind === 'binary') {
+    // For PDFs, extract text BEFORE upload so we can store it for search
+    let searchable_text = null;
+    if (kind === 'pdf') {
+      try { searchable_text = await extractPdfText(file); } catch {}
+    }
+    const { path, publicUrl } = await uploadFileToStorage(file, kind);
+    const row = {
+      owner_id: state.user.id,
+      title: file.name,
+      content: publicUrl,                    // store the public URL in content for easy access
+      tags: [],
+      folder_id: folderId,
+      kind: 'file',
+      original_filename: file.name,
+      language: kind === 'image' ? 'image' : kind === 'pdf' ? 'pdf' : 'binary',
+      mime_type: file.type || 'application/octet-stream',
+      size_bytes: file.size,
+      storage_path: path,
+      searchable_text,
+    };
+    const { data, error } = await sb.from('docs').insert(row).select().single();
+    if (error) {
+      // try to clean up the orphaned object
+      await sb.storage.from('kb-files').remove([path]);
+      throw error;
+    }
+    state.docs.unshift(data);
+    return data;
+  }
+
+  throw new Error(`Unsupported file type: ${file.name}`);
+}
+
+async function handleFileUpload(files, folderId = null) {
+  if (!state.canWrite) { toast('You do not have permission to upload.', 'error'); return; }
+  const rawArr = Array.from(files);
+  if (!rawArr.length) return;
+  const arr = rawArr.filter(f => !isHiddenName(f.name));
+  const skipped = rawArr.length - arr.length;
+  if (skipped) toast(`Skipped ${skipped} hidden file${skipped === 1 ? '' : 's'}`);
+  if (!arr.length) return;
+  toast(`Uploading ${arr.length} file${arr.length === 1 ? '' : 's'}…`);
+  let okCount = 0, firstId = null;
+  for (const f of arr) {
+    try {
+      const d = await uploadOneFile(f, { folderId });
+      okCount++;
+      if (!firstId) firstId = d.id;
+    } catch (e) {
+      toast(`${f.name}: ${e.message}`, 'error');
+    }
+  }
+  renderDocList(); renderFolderTree();
+  if (firstId) {
+    state.currentDocId = firstId;
+    showView('doc');
+  }
+  if (okCount) toast(`Uploaded ${okCount} file${okCount === 1 ? '' : 's'}`, 'success');
+}
+
+function openFilePicker(folderId = null) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', () => {
+    if (input.files.length) handleFileUpload(input.files, folderId);
+    setTimeout(() => input.remove(), 0);
+  });
+  input.click();
+}
+
+function openFolderPicker(parentFolderId = null) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  // Non-standard but widely supported (Chrome/Edge/Firefox/Safari)
+  input.webkitdirectory = true;
+  input.directory = true;
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', async () => {
+    const items = [];
+    let skipped = 0;
+    for (const f of input.files) {
+      const rel = f.webkitRelativePath || f.name;
+      if (pathHasHidden(rel)) { skipped++; continue; }
+      items.push({ file: f, relativePath: rel });
+    }
+    setTimeout(() => input.remove(), 0);
+    if (skipped) toast(`Skipped ${skipped} hidden file${skipped === 1 ? '' : 's'}`);
+    if (items.length) handleFolderUpload(items, parentFolderId);
+  });
+  input.click();
+}
+
+/* Walk a dropped DataTransferItemList (drag-drop) into a flat list with relativePath */
+async function walkDataTransferItems(items, depth = 0) {
+  if (depth > FOLDER_UPLOAD_MAX_DEPTH) return [];
+  const out = [];
+  const entries = [];
+  for (const it of items) {
+    const entry = it.webkitGetAsEntry?.();
+    if (entry) entries.push(entry);
+  }
+  await Promise.all(entries.map(async e => {
+    const sub = await walkEntry(e, '', depth);
+    out.push(...sub);
+  }));
+  return out;
+}
+async function walkEntry(entry, prefix, depth) {
+  if (depth > FOLDER_UPLOAD_MAX_DEPTH) return [];
+  if (isHiddenName(entry.name)) return [];   // skip dotfiles and dot-dirs entirely
+  if (entry.isFile) {
+    const file = await new Promise((r, rej) => entry.file(r, rej));
+    return [{ file, relativePath: prefix + entry.name }];
+  }
+  if (entry.isDirectory) {
+    const reader = entry.createReader();
+    const allChildren = [];
+    // readEntries paginates — call until empty
+    while (true) {
+      const batch = await new Promise((r, rej) => reader.readEntries(r, rej));
+      if (!batch.length) break;
+      allChildren.push(...batch);
+    }
+    const out = [];
+    for (const c of allChildren) {
+      const sub = await walkEntry(c, prefix + entry.name + '/', depth + 1);
+      out.push(...sub);
+    }
+    return out;
+  }
+  return [];
+}
+
+/* Map a relative path like "k8s/prod/troubleshooting.md" -> { folder_id, file }
+   creating folders as needed, reusing existing ones with the same path. */
+async function ensureFolderPathExists(pathParts, rootParentId, cache) {
+  let parent = rootParentId;
+  let key = '';
+  for (const part of pathParts) {
+    key += '/' + part;
+    if (cache.has(key + '@' + (parent || ''))) {
+      parent = cache.get(key + '@' + (parent || ''));
+      continue;
+    }
+    // Look for existing folder with this name & parent
+    const existing = state.folders.find(f => f.name === part && (f.parent_id || null) === (parent || null));
+    if (existing) {
+      cache.set(key + '@' + (parent || ''), existing.id);
+      parent = existing.id;
+      continue;
+    }
+    const created = await createFolder({ name: part, parent_id: parent });
+    if (!created) throw new Error('Could not create folder ' + part);
+    cache.set(key + '@' + (parent || ''), created.id);
+    parent = created.id;
+  }
+  return parent;
+}
+
+async function handleFolderUpload(items, rootParentId = null) {
+  if (!state.canWrite) { toast('No permission to upload.', 'error'); return; }
+  if (items.length === 0) return;
+  if (items.length > FOLDER_UPLOAD_MAX_FILES) {
+    toast(`Too many files (${items.length}). Cap is ${FOLDER_UPLOAD_MAX_FILES}.`, 'error');
+    return;
+  }
+
+  const progress = openUploadProgress(items.length);
+  const cache = new Map(); // path -> folder_id, so repeated path prefixes don't re-query
+  let done = 0, ok = 0, firstId = null;
+
+  for (const { file, relativePath } of items) {
+    const parts = relativePath.split('/').filter(Boolean);
+    const fileName = parts.pop();
+    let targetFolderId = rootParentId;
+    try {
+      if (parts.length) targetFolderId = await ensureFolderPathExists(parts, rootParentId, cache);
+      progress.update(done, file.name, `→ ${parts.join('/') || '(root)'}`);
+      const d = await uploadOneFile(file, { folderId: targetFolderId });
+      ok++;
+      if (!firstId) firstId = d.id;
+    } catch (e) {
+      progress.appendError(`${relativePath}: ${e.message}`);
+    }
+    done++;
+    progress.update(done, file.name);
+  }
+
+  progress.finish(ok, items.length - ok);
+  renderFolderTree(); renderDocList();
+  if (firstId) { state.currentDocId = firstId; }
+}
+
+function openUploadProgress(total) {
+  openModal({
+    title: 'Uploading…',
+    body: `
+      <div style="margin-bottom:10px;font-size:13px;color:var(--text-soft);">Processing <b id="up-done">0</b> of <b>${total}</b> files…</div>
+      <div style="height:8px;background:var(--bg-soft);border-radius:999px;overflow:hidden;margin-bottom:14px;">
+        <div id="up-bar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--primary),var(--accent-2));transition:width 0.2s ease;"></div>
+      </div>
+      <div id="up-current" style="font-family:var(--font-mono);font-size:12px;color:var(--text);word-break:break-all;"></div>
+      <div id="up-rel"     style="font-size:11.5px;color:var(--text-muted);margin-top:2px;"></div>
+      <div id="up-errors"  style="margin-top:14px;display:flex;flex-direction:column;gap:4px;max-height:120px;overflow-y:auto;"></div>
+    `,
+    footer: `<button class="btn btn-ghost btn-sm" id="up-close" disabled>Close</button>`,
+    size: 'modal-lg',
+  });
+  $('#up-close').onclick = closeModal;
+  return {
+    update(done, name, rel) {
+      $('#up-done').textContent = done;
+      $('#up-bar').style.width = ((done / total) * 100) + '%';
+      if (name) $('#up-current').textContent = name;
+      if (rel)  $('#up-rel').textContent = rel;
+    },
+    appendError(msg) {
+      const el = document.createElement('div');
+      el.style.cssText = 'font-size:11.5px;color:var(--danger);background:var(--danger-soft);padding:6px 10px;border-radius:var(--radius-xs);';
+      el.textContent = msg;
+      $('#up-errors').appendChild(el);
+    },
+    finish(ok, fail) {
+      $('#up-current').textContent = fail ? `Done — ${ok} uploaded, ${fail} failed.` : `Done — ${ok} uploaded.`;
+      $('#up-close').disabled = false;
+      if (!fail) toast(`Uploaded ${ok} file${ok === 1 ? '' : 's'}`, 'success');
+    },
+  };
+}
+
+async function deleteFileObject(doc) {
+  if (doc?.storage_path) {
+    try { await sb.storage.from('kb-files').remove([doc.storage_path]); } catch {}
+  }
+}
 
 /* ============================================================================
    REALTIME (so phone edits show up on laptop instantly)
@@ -997,19 +1493,25 @@ function renderDocList() {
     list.innerHTML = `<div class="doc-item-empty">${msg}</div>`;
     return;
   }
-  list.innerHTML = docs.map(d => `
-    <div class="doc-item ${d.id === state.currentDocId ? 'active' : ''}" data-id="${d.id}" ${state.canWrite ? 'draggable="true"' : ''}>
+  list.innerHTML = docs.map(d => {
+    const isFile = d.kind === 'file';
+    const fileIcon = isFile
+      ? (d.language === 'image' ? ICON_IMAGE
+        : d.language === 'pdf'   ? ICON_PDF
+        : ICON_CODE)
+      : ICON_DOC;
+    const meta = isFile
+      ? `<span>${fmtDate(d.updated_at)}</span><span>·</span><span>${prettyBytes(d.size_bytes || 0)}</span>`
+      : `<span>${fmtDate(d.updated_at)}</span><span>·</span><span>${wordCount(d.content)} words</span>`;
+    return `
+    <div class="doc-item ${d.id === state.currentDocId ? 'active' : ''} ${isFile ? 'is-file' : ''}" data-id="${d.id}" ${state.canWrite ? 'draggable="true"' : ''}>
       <div class="doc-item-title">
-        ${d.pinned ? '<span class="doc-item-pin">★</span>' : `<span class="doc-item-icon">${ICON_DOC}</span>`}
+        ${d.pinned ? '<span class="doc-item-pin">★</span>' : `<span class="doc-item-icon">${fileIcon}</span>`}
         <span>${esc(d.title || 'Untitled')}</span>
       </div>
-      <div class="doc-item-meta">
-        <span>${fmtDate(d.updated_at)}</span>
-        <span>·</span>
-        <span>${wordCount(d.content)} words</span>
-      </div>
-    </div>
-  `).join('');
+      <div class="doc-item-meta">${meta}</div>
+    </div>`;
+  }).join('');
   $$('#doc-list .doc-item').forEach(el => {
     el.addEventListener('click', () => {
       state.currentDocId = el.dataset.id;
@@ -1093,11 +1595,15 @@ function renderDocView() {
   $('#doc-view-tags').innerHTML = (doc.tags || []).map(t => `<span class="tag">#${esc(t)}</span>`).join('');
   $('#pin-btn').classList.toggle('active', !!doc.pinned);
 
-  const html = marked.parse(doc.content || '', { breaks: true, gfm: true });
-  const safe = DOMPurify.sanitize(html);
   const target = $('#doc-rendered');
-  target.innerHTML = safe;
-  decorateCopy(target);
+  if (doc.kind === 'file') {
+    target.innerHTML = renderFileView(doc);
+    wireFileViewActions(doc);
+  } else {
+    const html = marked.parse(doc.content || '', { breaks: true, gfm: true });
+    target.innerHTML = DOMPurify.sanitize(html);
+    decorateCopy(target);
+  }
 
   if (state.searchTerms.length) {
     const count = highlightInNode(target, state.searchTerms);
@@ -1175,6 +1681,65 @@ async function copyToClipboard(text, btn) {
     btn.innerHTML = oldHTML;
     btn.classList.remove('copied');
   }, 1100);
+}
+
+function renderFileView(doc) {
+  const lang = doc.language || 'plaintext';
+  const sizeStr = prettyBytes(doc.size_bytes || (doc.content || '').length);
+  const head = `
+    <div class="file-head">
+      <div class="file-head-name">${esc(doc.original_filename || doc.title)}</div>
+      <div class="file-head-meta">${esc(lang)} · ${sizeStr}</div>
+      <div class="file-head-actions">
+        ${lang !== 'image' && lang !== 'pdf' && lang !== 'binary'
+          ? `<button class="btn btn-ghost btn-sm" id="file-copy-btn">Copy</button>` : ''}
+        <button class="btn btn-ghost btn-sm" id="file-download-btn">Download</button>
+        ${doc.language === 'pdf' ? `<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener" href="${esc(doc.content)}">Open in new tab</a>` : ''}
+      </div>
+    </div>`;
+  if (lang === 'image') {
+    return head + `<div class="file-body file-body-image"><img src="${esc(doc.content)}" alt="${esc(doc.title)}"></div>`;
+  }
+  if (lang === 'pdf') {
+    return head + `<div class="file-body file-body-pdf"><iframe src="${esc(doc.content)}" title="${esc(doc.title)}" loading="lazy"></iframe></div>`;
+  }
+  if (lang === 'binary') {
+    return head + `<div class="file-body file-body-binary">
+      <p>This file type can't be previewed in the browser.</p>
+      <p><a class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="${esc(doc.content)}">Open / download</a></p>
+    </div>`;
+  }
+  // Text — show as a single code block (no markdown render); use language class for any future highlighting
+  return head + `<div class="file-body"><pre class="file-code"><code class="language-${esc(lang)}">${esc(doc.content || '')}</code></pre></div>`;
+}
+
+function wireFileViewActions(doc) {
+  const copyBtn = $('#file-copy-btn');
+  const dlBtn   = $('#file-download-btn');
+  if (copyBtn) copyBtn.onclick = async () => {
+    try { await navigator.clipboard.writeText(doc.content || ''); toast('Copied', 'success'); }
+    catch { toast('Copy failed', 'error'); }
+  };
+  if (dlBtn) dlBtn.onclick = () => downloadDocAsFile(doc);
+}
+
+function downloadDocAsFile(doc) {
+  // If the content is a URL to Storage, open in new tab (browser handles download header).
+  if (doc.storage_path) {
+    const a = document.createElement('a');
+    a.href = doc.content; a.download = doc.original_filename || doc.title || 'file';
+    a.target = '_blank'; a.rel = 'noopener';
+    a.click();
+    return;
+  }
+  // Otherwise blob from the text content
+  const mime = doc.mime_type || 'text/plain';
+  const blob = new Blob([doc.content || ''], { type: mime });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = doc.original_filename || doc.title || 'file.txt';
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function highlightInNode(root, terms) {
@@ -1353,8 +1918,13 @@ function renderSearchResults() {
   const needle = q.toLowerCase();
   const results = [];
   for (const doc of state.docs) {
-    const title = doc.title || '', content = doc.content || '', tags = (doc.tags || []).join(' ');
-    const hay = (title + '\n' + tags + '\n' + content).toLowerCase();
+    const title = doc.title || '';
+    const tags = (doc.tags || []).join(' ');
+    // For files (image/pdf/binary), the `content` column holds a Storage URL — skip it.
+    // Instead use `searchable_text` which holds extracted text (e.g. from PDF).
+    const isBinaryFile = doc.kind === 'file' && ['image', 'pdf', 'binary'].includes(doc.language);
+    const body = isBinaryFile ? (doc.searchable_text || '') : (doc.content || '');
+    const hay = (title + '\n' + tags + '\n' + body).toLowerCase();
     let count = 0, from = 0;
     while (true) {
       const i = hay.indexOf(needle, from);
@@ -1373,20 +1943,26 @@ function renderSearchResults() {
     return;
   }
 
-  wrap.innerHTML = results.map(({ doc, count }) => `
+  wrap.innerHTML = results.map(({ doc, count }) => {
+    const isBinaryFile = doc.kind === 'file' && ['image', 'pdf', 'binary'].includes(doc.language);
+    const snippetText = isBinaryFile ? (doc.searchable_text || '') : (doc.content || '');
+    const sizeOrWords = isBinaryFile ? prettyBytes(doc.size_bytes || 0) : `${wordCount(doc.content)} words`;
+    return `
     <div class="search-result" data-id="${doc.id}">
       <div class="search-result-head">
         <div class="search-result-title">${highlightString(doc.title || 'Untitled', state.searchTerms)}</div>
         <div class="search-result-count">${count} match${count === 1 ? '' : 'es'}</div>
       </div>
-      <div class="search-result-snippet">${makeSnippet(doc.content, state.searchTerms)}</div>
+      <div class="search-result-snippet">${makeSnippet(snippetText, state.searchTerms)}</div>
       <div class="search-result-meta">
         <span>Updated ${fmtDate(doc.updated_at)}</span>
         <span>·</span>
-        <span>${wordCount(doc.content)} words</span>
+        <span>${sizeOrWords}</span>
+        ${doc.kind === 'file' ? `<span>·</span><span class="tag">${esc(doc.language || 'file')}</span>` : ''}
         ${(doc.tags || []).length ? '<span>·</span>' + doc.tags.map(t => `<span class="tag">#${esc(t)}</span>`).join(' ') : ''}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   $$('#search-results .search-result').forEach(el => el.addEventListener('click', () => {
     state.currentDocId = el.dataset.id;
@@ -1417,6 +1993,8 @@ function makeSnippet(text, terms) {
 const COMMANDS = [
   { id: 'new',         kind: 'cmd', label: 'Create new document',        run: () => { state.currentDocId = null; showView('editor'); } },
   { id: 'new-folder',  kind: 'cmd', label: 'Create new folder',          run: () => promptNewFolder(state.currentFolderId) },
+  { id: 'upload',      kind: 'cmd', label: 'Upload files to current folder', run: () => openFilePicker(state.currentFolderId) },
+  { id: 'upload-folder', kind: 'cmd', label: 'Upload folder (preserves structure)', run: () => openFolderPicker(state.currentFolderId) },
   { id: 'move',        kind: 'cmd', label: 'Move current doc to folder', run: openMoveDocModal },
   { id: 'all-docs',    kind: 'cmd', label: 'Show all documents (root)',  run: () => { state.currentFolderId = null; renderFolderTree(); renderDocList(); } },
   { id: 'search',      kind: 'cmd', label: 'Focus search',                run: () => $('#global-search').focus() },
@@ -1844,6 +2422,12 @@ function bindEvents() {
   $('#sidebar-backdrop').addEventListener('click', () => { closeSidebarMobile(); });
   $('#theme-toggle').addEventListener('click', toggleTheme);
   $('#new-doc-btn').addEventListener('click', () => { state.currentDocId = null; showView('editor'); });
+  $('#upload-btn').addEventListener('click', (e) => {
+    // Shift-click = upload a whole folder, regular click = upload files
+    if (e.shiftKey) openFolderPicker(state.currentFolderId);
+    else            openFilePicker(state.currentFolderId);
+  });
+  $('#upload-btn').setAttribute('title', 'Upload files · Shift-click for folder');
   $('#cmd-palette-btn').addEventListener('click', openCmdPalette);
 
   // User dropdown
@@ -1874,6 +2458,18 @@ function bindEvents() {
   // On mobile, tapping a doc closes the sidebar drawer
   $('#doc-list').addEventListener('click', () => { if (isMobile()) closeSidebarMobile(); });
 
+  // Drop external files anywhere on the doc list -> uploads to current folder
+  attachDropTarget($('#doc-list'), null /* will use currentFolderId at drop time */);
+  // override: read folder at drop time
+  $('#doc-list').addEventListener('drop', async (e) => {
+    if (!state.canWrite) return;
+    if (e.dataTransfer.files && e.dataTransfer.files.length && !e.dataTransfer.types.includes('text/x-kb-docid')) {
+      e.preventDefault();
+      $('#doc-list').classList.remove('drag-over');
+      await handleFileUpload(e.dataTransfer.files, state.currentFolderId);
+    }
+  }, true);
+
   // Close sidebar drawer on viewport resize back to desktop
   window.addEventListener('resize', debounce(() => { if (!isMobile()) $('#sidebar-backdrop').hidden = true; }, 100));
 
@@ -1884,7 +2480,14 @@ function bindEvents() {
   $('#clear-search-btn').addEventListener('click', () => { $('#global-search').value = ''; performSearch(''); });
 
   // Doc view toolbar
-  $('#edit-btn').addEventListener('click', () => showView('editor'));
+  $('#edit-btn').addEventListener('click', () => {
+    const d = getDoc(state.currentDocId);
+    if (d?.kind === 'file' && ['image', 'pdf', 'binary'].includes(d.language)) {
+      toast('This file type is view-only.', 'error');
+      return;
+    }
+    showView('editor');
+  });
   $('#delete-btn').addEventListener('click', async () => {
     const d = getDoc(state.currentDocId); if (!d) return;
     if (!confirm(`Delete "${d.title}"? This cannot be undone.`)) return;
@@ -1985,6 +2588,12 @@ function bindEvents() {
       e.preventDefault(); $('#global-search').focus(); $('#global-search').select(); return;
     }
     if (ctrl && e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); promptNewFolder(state.currentFolderId); return; }
+    if (ctrl && e.key.toLowerCase() === 'u') {
+      if (state.activeView === 'editor') return; // don't conflict with browser source-view
+      e.preventDefault();
+      if (state.canWrite) openFilePicker(state.currentFolderId);
+      return;
+    }
     if (ctrl && e.key.toLowerCase() === 'n') { e.preventDefault(); state.currentDocId = null; showView('editor'); return; }
     if (ctrl && e.key.toLowerCase() === 's' && state.activeView === 'editor') { e.preventDefault(); saveEditor(); return; }
     if (ctrl && e.key.toLowerCase() === 'e') {

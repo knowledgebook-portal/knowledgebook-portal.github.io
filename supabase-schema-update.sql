@@ -91,6 +91,36 @@ revoke all on function public.kb_db_backup() from public;
 revoke all on function public.kb_db_backup() from anon, authenticated;
 
 -- ---------------------------------------------------------------------------
+-- FILES — extra columns on docs so a row can also represent an uploaded file.
+--   kind:               'doc' | 'file'
+--   original_filename:  source filename when uploaded (e.g. deployment.yaml)
+--   language:           hint for syntax highlighting (yaml, sh, dockerfile, ...)
+--   mime_type:          for image/pdf rendering
+--   size_bytes:         file size (text content length or storage object size)
+--   storage_path:       null for inline text; set for binary files in Storage bucket
+-- ---------------------------------------------------------------------------
+alter table public.docs add column if not exists kind              text not null default 'doc';
+alter table public.docs add column if not exists original_filename text;
+alter table public.docs add column if not exists language          text;
+alter table public.docs add column if not exists mime_type         text;
+alter table public.docs add column if not exists size_bytes        bigint;
+alter table public.docs add column if not exists storage_path      text;
+-- Extracted text for binary files (e.g. PDF text) so search can find it.
+-- For markdown/text docs/files this stays NULL (their content is already searchable).
+alter table public.docs add column if not exists searchable_text   text;
+
+create index if not exists docs_searchable_trgm_idx
+  on public.docs using gin (searchable_text gin_trgm_ops);
+
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'docs_kind_check') then
+    alter table public.docs add constraint docs_kind_check check (kind in ('doc','file'));
+  end if;
+end $$;
+
+create index if not exists docs_kind_idx on public.docs(kind);
+
+-- ---------------------------------------------------------------------------
 -- FOLDERS — shared workspace, optional nesting, one folder per doc
 -- ---------------------------------------------------------------------------
 create table if not exists public.folders (
